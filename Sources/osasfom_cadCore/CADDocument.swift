@@ -26,8 +26,13 @@ public final class CADDocument: ObservableObject {
     }
 
     public func addBody(_ kind: PrimitiveKind) {
-        let nextIndex = bodies.filter { $0.primitive == kind }.count + 1
-        let body = CADBody.make(kind: kind, index: nextIndex)
+        let body = CADBody.make(kind: kind, index: nextIndex(for: kind))
+        bodies.append(body)
+        selectedBodyID = body.id
+    }
+
+    public func addBody(_ kind: PrimitiveKind, bounds: BodyBounds, name: String? = nil) {
+        let body = CADBody.make(kind: kind, index: nextIndex(for: kind), bounds: bounds, name: name)
         bodies.append(body)
         selectedBodyID = body.id
     }
@@ -64,6 +69,10 @@ public final class CADDocument: ObservableObject {
     public func selectedMaterial(for body: CADBody) -> MaterialDefinition? {
         guard let materialID = body.materialID else { return nil }
         return materials.first(where: { $0.id == materialID })
+    }
+
+    private func nextIndex(for kind: PrimitiveKind) -> Int {
+        bodies.filter { $0.primitive == kind }.count + 1
     }
 
     public func serializeProjectData() throws -> Data {

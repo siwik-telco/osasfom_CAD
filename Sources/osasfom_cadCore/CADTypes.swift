@@ -119,6 +119,64 @@ public struct PrimitiveParameters: Codable, Hashable, Sendable {
     )
 }
 
+public struct BodyBounds: Codable, Hashable, Sendable {
+    public var xMin: Double
+    public var xMax: Double
+    public var yMin: Double
+    public var yMax: Double
+    public var zMin: Double
+    public var zMax: Double
+
+    public init(
+        xMin: Double,
+        xMax: Double,
+        yMin: Double,
+        yMax: Double,
+        zMin: Double,
+        zMax: Double
+    ) {
+        self.xMin = xMin
+        self.xMax = xMax
+        self.yMin = yMin
+        self.yMax = yMax
+        self.zMin = zMin
+        self.zMax = zMax
+    }
+
+    public mutating func sanitize(minSpan: Double = 0.01) {
+        if xMax <= xMin { xMax = xMin + minSpan }
+        if yMax <= yMin { yMax = yMin + minSpan }
+        if zMax <= zMin { zMax = zMin + minSpan }
+    }
+
+    public static let defaultBox = BodyBounds(
+        xMin: -20,
+        xMax: 20,
+        yMin: -5,
+        yMax: 5,
+        zMin: -15,
+        zMax: 15
+    )
+
+    public static let defaultCylinder = BodyBounds(
+        xMin: -2.5,
+        xMax: 2.5,
+        yMin: -15,
+        yMax: 15,
+        zMin: -2.5,
+        zMax: 2.5
+    )
+
+    public static let defaultSheet = BodyBounds(
+        xMin: -30,
+        xMax: 30,
+        yMin: -0.1,
+        yMax: 0.1,
+        zMin: -20,
+        zMax: 20
+    )
+}
+
 public struct BodyTransform: Codable, Hashable, Sendable {
     public var position: Vec3
     public var rotationDegrees: Vec3
@@ -162,27 +220,99 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable {
         self.isVisible = isVisible
     }
 
-    public static func make(kind: PrimitiveKind, index: Int) -> CADBody {
+    public var bounds: BodyBounds {
+        let safeScaleX = max(abs(transform.scale.x), 0.0001)
+        let safeScaleY = max(abs(transform.scale.y), 0.0001)
+        let safeScaleZ = max(abs(transform.scale.z), 0.0001)
+
+        switch primitive {
+        case .box, .sheet:
+            let spanX = parameters.size.x * safeScaleX
+            let spanY = parameters.size.y * safeScaleY
+            let spanZ = parameters.size.z * safeScaleZ
+            return BodyBounds(
+                xMin: transform.position.x - (spanX / 2),
+                xMax: transform.position.x + (spanX / 2),
+                yMin: transform.position.y - (spanY / 2),
+                yMax: transform.position.y + (spanY / 2),
+                zMin: transform.position.z - (spanZ / 2),
+                zMax: transform.position.z + (spanZ / 2)
+            )
+        case .cylinder:
+            let spanX = parameters.radius * 2 * safeScaleX
+            let spanY = parameters.height * safeScaleY
+            let spanZ = parameters.radius * 2 * safeScaleZ
+            return BodyBounds(
+                xMin: transform.position.x - (spanX / 2),
+                xMax: transform.position.x + (spanX / 2),
+                yMin: transform.position.y - (spanY / 2),
+                yMax: transform.position.y + (spanY / 2),
+                zMin: transform.position.z - (spanZ / 2),
+                zMax: transform.position.z + (spanZ / 2)
+            )
+        }
+    }
+
+    public mutating func applyBounds(_ rawBounds: BodyBounds) {
+        var sanitizedBounds = rawBounds
+        sanitizedBounds.sanitize()
+
+        let safeScaleX = max(abs(transform.scale.x), 0.0001)
+        let safeScaleY = max(abs(transform.scale.y), 0.0001)
+        let safeScaleZ = max(abs(transform.scale.z), 0.0001)
+
+        transform.position = Vec3(
+            x: (sanitizedBounds.xMin + sanitizedBounds.xMax) / 2,
+            y: (sanitizedBounds.yMin + sanitizedBounds.yMax) / 2,
+            z: (sanitizedBounds.zMin + sanitizedBounds.zMax) / 2
+        )
+
+        switch primitive {
+        case .box, .sheet:
+            parameters.size = Vec3(
+                x: (sanitizedBounds.xMax - sanitizedBounds.xMin) / safeScaleX,
+                y: (sanitizedBounds.yMax - sanitizedBounds.yMin) / safeScaleY,
+                z: (sanitizedBounds.zMax - sanitizedBounds.zMin) / safeScaleZ
+            )
+        case .cylinder:
+            let xRadius = (sanitizedBounds.xMax - sanitizedBounds.xMin) / (2 * safeScaleX)
+            let zRadius = (sanitizedBounds.zMax - sanitizedBounds.zMin) / (2 * safeScaleZ)
+            parameters.radius = min(xRadius, zRadius)
+            parameters.height = (sanitizedBounds.yMax - sanitizedBounds.yMin) / safeScaleY
+        }
+
+        parameters.sanitize(for: primitive)
+    }
+
+    public static func make(kind: PrimitiveKind, index: Int, bounds: BodyBounds? = nil, name: String? = nil) -> CADBody {
+        var body: CADBody
+
         switch kind {
         case .box:
-            return CADBody(
-                name: "Box \(index)",
+            body = CADBody(
+                name: name ?? "Box \(index)",
                 primitive: .box,
                 parameters: .defaultBox
             )
         case .cylinder:
-            return CADBody(
-                name: "Cylinder \(index)",
+            body = CADBody(
+                name: name ?? "Cylinder \(index)",
                 primitive: .cylinder,
                 parameters: .defaultCylinder
             )
         case .sheet:
-            return CADBody(
-                name: "Sheet \(index)",
+            body = CADBody(
+                name: name ?? "Sheet \(index)",
                 primitive: .sheet,
                 parameters: .defaultSheet
             )
         }
+
+        if let bounds {
+            body.applyBounds(bounds)
+        }
+
+        return body
     }
 }
 

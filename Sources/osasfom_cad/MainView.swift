@@ -5,31 +5,41 @@ import SwiftUI
 
 struct MainView: View {
     @ObservedObject var document: CADDocument
+    @State private var addSheetKind: PrimitiveKind?
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(document: document)
-        } content: {
+        HSplitView {
+            SidebarView(document: document, openAddSheet: { kind in
+                addSheetKind = kind
+            })
+                .frame(minWidth: 220, idealWidth: 260, maxWidth: 420)
+
             SceneWorkspaceView(document: document)
-        } detail: {
+                .frame(minWidth: 520, maxWidth: .infinity, maxHeight: .infinity)
+
             InspectorView(document: document)
+                .frame(minWidth: 280, idealWidth: 340, maxWidth: 520)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(item: $addSheetKind) { kind in
+            AddBodySheet(document: document, kind: kind)
         }
         .toolbar {
             ToolbarItemGroup {
                 Button {
-                    document.addBody(.box)
+                    addSheetKind = .box
                 } label: {
                     Label("Box", systemImage: "cube")
                 }
 
                 Button {
-                    document.addBody(.cylinder)
+                    addSheetKind = .cylinder
                 } label: {
                     Label("Cylinder", systemImage: "cylinder")
                 }
 
                 Button {
-                    document.addBody(.sheet)
+                    addSheetKind = .sheet
                 } label: {
                     Label("Sheet", systemImage: "square")
                 }
@@ -84,6 +94,7 @@ struct MainView: View {
 
 private struct SidebarView: View {
     @ObservedObject var document: CADDocument
+    let openAddSheet: (PrimitiveKind) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -94,13 +105,13 @@ private struct SidebarView: View {
 
             HStack {
                 Button("Box") {
-                    document.addBody(.box)
+                    openAddSheet(.box)
                 }
                 Button("Cylinder") {
-                    document.addBody(.cylinder)
+                    openAddSheet(.cylinder)
                 }
                 Button("Sheet") {
-                    document.addBody(.sheet)
+                    openAddSheet(.sheet)
                 }
             }
             .buttonStyle(.bordered)
@@ -113,17 +124,28 @@ private struct SidebarView: View {
                 }
             }
 
-            HStack {
-                Text("Units: \(document.units)")
-                Spacer()
-                Text("Bodies: \(document.bodies.count)")
+            if let selectedBodyIndex = document.selectedBodyIndex {
+                ModelQuickEditView(bodyModel: $document.bodies[selectedBodyIndex])
+                    .padding(.horizontal)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Units: \(document.units)")
+                    Spacer()
+                    Text("Bodies: \(document.bodies.count)")
+                }
+
+                Text("Drag the vertical dividers to resize panels.")
+                    .font(.caption2)
             }
             .font(.caption)
             .foregroundStyle(.secondary)
             .padding(.horizontal)
             .padding(.bottom, 12)
         }
-        .navigationSplitViewColumnWidth(min: 240, ideal: 260)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func iconName(for primitive: PrimitiveKind) -> String {
@@ -138,6 +160,49 @@ private struct SidebarView: View {
     }
 }
 
+private struct ModelQuickEditView: View {
+    @Binding var bodyModel: CADBody
+
+    private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(3))
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Quick Edit")
+                .font(.headline)
+
+            TextField("Element name", text: $bodyModel.name)
+                .textFieldStyle(.roundedBorder)
+
+            switch bodyModel.primitive {
+            case .box:
+                quickSizeField(title: "Width", value: $bodyModel.parameters.size.x)
+                quickSizeField(title: "Height", value: $bodyModel.parameters.size.y)
+                quickSizeField(title: "Depth", value: $bodyModel.parameters.size.z)
+            case .cylinder:
+                quickSizeField(title: "Radius", value: $bodyModel.parameters.radius)
+                quickSizeField(title: "Height", value: $bodyModel.parameters.height)
+            case .sheet:
+                quickSizeField(title: "Width", value: $bodyModel.parameters.size.x)
+                quickSizeField(title: "Thickness", value: $bodyModel.parameters.size.y)
+                quickSizeField(title: "Depth", value: $bodyModel.parameters.size.z)
+            }
+        }
+        .padding(12)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func quickSizeField(title: String, value: Binding<Double>) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            TextField(title, value: value, format: numberFormat)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 110)
+        }
+    }
+}
+
 private struct SceneWorkspaceView: View {
     @ObservedObject var document: CADDocument
 
@@ -145,6 +210,7 @@ private struct SceneWorkspaceView: View {
         ZStack(alignment: .topLeading) {
             SceneViewport(document: document)
                 .background(Color.black.opacity(0.96))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("osasfom_cad")
@@ -155,11 +221,15 @@ private struct SceneWorkspaceView: View {
                 Text("Add solids, set dimensions, place them in 3D, assign materials.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Text("Resize the side panels by dragging the split dividers.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
             .padding(12)
             .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
             .padding()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -189,7 +259,8 @@ private struct InspectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationSplitViewColumnWidth(min: 320, ideal: 340)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -229,6 +300,10 @@ private struct BodyInspector: View {
                     TextField("Thickness (Y)", value: $bodyModel.parameters.size.y, format: numberFormat)
                     TextField("Depth (Z)", value: $bodyModel.parameters.size.z, format: numberFormat)
                 }
+            }
+
+            Section("Ranges") {
+                BodyBoundsEditorView(bodyModel: $bodyModel)
             }
 
             Section("Transform") {
@@ -277,6 +352,131 @@ private struct BodyInspector: View {
         }
         .formStyle(.grouped)
         .padding(.top, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+private struct AddBodySheet: View {
+    @ObservedObject var document: CADDocument
+    let kind: PrimitiveKind
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name: String = ""
+    @State private var bounds: BodyBounds
+
+    init(document: CADDocument, kind: PrimitiveKind) {
+        self.document = document
+        self.kind = kind
+
+        switch kind {
+        case .box:
+            _bounds = State(initialValue: .defaultBox)
+        case .cylinder:
+            _bounds = State(initialValue: .defaultCylinder)
+        case .sheet:
+            _bounds = State(initialValue: .defaultSheet)
+        }
+    }
+
+    private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(3))
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Add \(kind.displayName)")
+                .font(.title2.weight(.semibold))
+
+            Text("Define the spatial extent of the new solid using X/Y/Z min and max values.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            TextField("Element name (optional)", text: $name)
+                .textFieldStyle(.roundedBorder)
+
+            BodyBoundsFields(bounds: $bounds, numberFormat: numberFormat)
+
+            if kind == .cylinder {
+                Text("For cylinders, radius is derived from the smaller X/Z span and height from the Y span.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+
+                Button("Add") {
+                    var sanitizedBounds = bounds
+                    sanitizedBounds.sanitize()
+                    let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    document.addBody(kind, bounds: sanitizedBounds, name: trimmedName.isEmpty ? nil : trimmedName)
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
+    }
+}
+
+private struct BodyBoundsEditorView: View {
+    @Binding var bodyModel: CADBody
+
+    private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(3))
+
+    var body: some View {
+        BodyBoundsFields(bounds: boundsBinding, numberFormat: numberFormat)
+    }
+
+    private var boundsBinding: Binding<BodyBounds> {
+        Binding(
+            get: { bodyModel.bounds },
+            set: { newBounds in
+                bodyModel.applyBounds(newBounds)
+            }
+        )
+    }
+}
+
+private struct BodyBoundsFields: View {
+    @Binding var bounds: BodyBounds
+    let numberFormat: FloatingPointFormatStyle<Double>
+
+    var body: some View {
+        VStack(spacing: 10) {
+            boundsRow(axis: "X", minValue: binding(for: \.xMin), maxValue: binding(for: \.xMax))
+            boundsRow(axis: "Y", minValue: binding(for: \.yMin), maxValue: binding(for: \.yMax))
+            boundsRow(axis: "Z", minValue: binding(for: \.zMin), maxValue: binding(for: \.zMax))
+        }
+    }
+
+    private func boundsRow(axis: String, minValue: Binding<Double>, maxValue: Binding<Double>) -> some View {
+        HStack {
+            Text(axis)
+                .frame(width: 20, alignment: .leading)
+                .foregroundStyle(.secondary)
+
+            TextField("\(axis) min", value: minValue, format: numberFormat)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("\(axis) max", value: maxValue, format: numberFormat)
+                .textFieldStyle(.roundedBorder)
+        }
+    }
+
+    private func binding(for keyPath: WritableKeyPath<BodyBounds, Double>) -> Binding<Double> {
+        Binding(
+            get: { bounds[keyPath: keyPath] },
+            set: { newValue in
+                var updatedBounds = bounds
+                updatedBounds[keyPath: keyPath] = newValue
+                updatedBounds.sanitize()
+                bounds = updatedBounds
+            }
+        )
     }
 }
 

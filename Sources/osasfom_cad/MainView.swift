@@ -97,52 +97,58 @@ private struct SidebarView: View {
     let openAddSheet: (PrimitiveKind) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Model")
-                .font(.headline)
-                .padding(.horizontal)
-                .padding(.top, 12)
-
-            HStack {
-                Button("Box") {
-                    openAddSheet(.box)
-                }
-                Button("Cylinder") {
-                    openAddSheet(.cylinder)
-                }
-                Button("Sheet") {
-                    openAddSheet(.sheet)
-                }
-            }
-            .buttonStyle(.bordered)
-            .padding(.horizontal)
-
-            List(selection: $document.selectedBodyID) {
-                ForEach(document.bodies) { body in
-                    Label(body.name, systemImage: iconName(for: body.primitive))
-                        .tag(Optional(body.id))
-                }
-            }
-
-            if let selectedBodyIndex = document.selectedBodyIndex {
-                ModelQuickEditView(bodyModel: $document.bodies[selectedBodyIndex])
+        VSplitView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("Model")
+                    .font(.headline)
                     .padding(.horizontal)
-            }
+                    .padding(.top, 12)
 
-            VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text("Units: \(document.units)")
-                    Spacer()
-                    Text("Bodies: \(document.bodies.count)")
+                    Button("Box") {
+                        openAddSheet(.box)
+                    }
+                    Button("Cylinder") {
+                        openAddSheet(.cylinder)
+                    }
+                    Button("Sheet") {
+                        openAddSheet(.sheet)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .padding(.horizontal)
+
+                List(selection: $document.selectedBodyID) {
+                    ForEach(document.bodies) { body in
+                        Label(body.name, systemImage: iconName(for: body.primitive))
+                            .tag(Optional(body.id))
+                    }
                 }
 
-                Text("Drag the vertical dividers to resize panels.")
-                    .font(.caption2)
+                if let selectedBodyIndex = document.selectedBodyIndex {
+                    ModelQuickEditView(bodyModel: $document.bodies[selectedBodyIndex])
+                        .padding(.horizontal)
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Units: \(document.units)")
+                        Spacer()
+                        Text("Bodies: \(document.bodies.count)")
+                    }
+
+                    Text("Drag split dividers to resize model, variables, and viewport panels.")
+                        .font(.caption2)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.bottom, 12)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal)
-            .padding(.bottom, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            VariablesPanelView(document: document)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -242,6 +248,8 @@ private struct InspectorView: View {
                 BodyInspector(
                     bodyModel: $document.bodies[selectedBodyIndex],
                     materials: document.materials,
+                    variableNames: document.variableNames(),
+                    applyVariablesAction: { document.applyVariablesToBodies() },
                     deleteAction: { document.deleteSelectedBody() }
                 )
             } else {
@@ -267,6 +275,8 @@ private struct InspectorView: View {
 private struct BodyInspector: View {
     @Binding var bodyModel: CADBody
     let materials: [MaterialDefinition]
+    let variableNames: [String]
+    let applyVariablesAction: () -> Void
     let deleteAction: () -> Void
 
     private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(3))
@@ -300,6 +310,13 @@ private struct BodyInspector: View {
                     TextField("Thickness (Y)", value: $bodyModel.parameters.size.y, format: numberFormat)
                     TextField("Depth (Z)", value: $bodyModel.parameters.size.z, format: numberFormat)
                 }
+            }
+
+            Section("Variables") {
+                DimensionVariableBindingsView(bodyModel: $bodyModel, variableNames: variableNames)
+                Text("Linked variables override the corresponding dimensions when their values change.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Ranges") {
@@ -353,6 +370,140 @@ private struct BodyInspector: View {
         .formStyle(.grouped)
         .padding(.top, 12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: bodyModel.variableBindings) { _ in
+            applyVariablesAction()
+        }
+    }
+}
+
+private struct VariablesPanelView: View {
+    @ObservedObject var document: CADDocument
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label("Variables", systemImage: "slider.horizontal.3")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    document.variables.append(CADVariable(name: "var\(document.variables.count + 1)", value: 10))
+                    document.applyVariablesToBodies()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+
+            Text("Edit variables here. Linked bodies update live when values change.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+
+            List {
+                ForEach($document.variables) { $variable in
+                    VariableRowView(variable: $variable)
+                }
+                .onDelete { offsets in
+                    document.variables.remove(atOffsets: offsets)
+                    document.applyVariablesToBodies()
+                }
+            }
+            .listStyle(.inset)
+
+            HStack {
+                Text("Variables: \(document.variables.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("Panel below model tree")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+            .padding(.bottom, 12)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .onChange(of: document.variables) { _ in
+            document.applyVariablesToBodies()
+        }
+    }
+}
+
+private struct VariableRowView: View {
+    @Binding var variable: CADVariable
+
+    private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(6))
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                TextField("Name", text: $variable.name)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 180)
+
+                TextField("Value", value: $variable.value, format: numberFormat)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 140)
+
+                TextField("Description", text: $variable.description)
+                    .textFieldStyle(.roundedBorder)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct DimensionVariableBindingsView: View {
+    @Binding var bodyModel: CADBody
+    let variableNames: [String]
+
+    var body: some View {
+        switch bodyModel.primitive {
+        case .box:
+            VStack(spacing: 10) {
+                variablePickerRow(title: "Width variable", selection: binding(for: \.width))
+                variablePickerRow(title: "Height variable", selection: binding(for: \.height))
+                variablePickerRow(title: "Depth variable", selection: binding(for: \.depth))
+            }
+        case .cylinder:
+            VStack(spacing: 10) {
+                variablePickerRow(title: "Radius variable", selection: binding(for: \.radius))
+                variablePickerRow(title: "Height variable", selection: binding(for: \.height))
+            }
+        case .sheet:
+            VStack(spacing: 10) {
+                variablePickerRow(title: "Width variable", selection: binding(for: \.width))
+                variablePickerRow(title: "Thickness variable", selection: binding(for: \.height))
+                variablePickerRow(title: "Depth variable", selection: binding(for: \.depth))
+            }
+        }
+    }
+
+    private func variablePickerRow(title: String, selection: Binding<String?>) -> some View {
+        HStack {
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Picker(title, selection: selection) {
+                Text("None").tag(Optional<String>.none)
+                ForEach(variableNames, id: \.self) { variableName in
+                    Text(variableName).tag(Optional(variableName))
+                }
+            }
+            .labelsHidden()
+            .frame(width: 180)
+        }
+    }
+
+    private func binding(for keyPath: WritableKeyPath<BodyVariableBindings, String?>) -> Binding<String?> {
+        Binding(
+            get: { bodyModel.variableBindings[keyPath: keyPath] },
+            set: { newValue in
+                bodyModel.variableBindings[keyPath: keyPath] = newValue
+            }
+        )
     }
 }
 

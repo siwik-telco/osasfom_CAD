@@ -31,6 +31,25 @@ public struct RGBAColor: Codable, Hashable, Sendable {
     public static let neutralGray = RGBAColor(red: 0.72, green: 0.74, blue: 0.78)
 }
 
+public struct CADVariable: Identifiable, Codable, Hashable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var value: Double
+    public var description: String
+
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        value: Double,
+        description: String = ""
+    ) {
+        self.id = id
+        self.name = name
+        self.value = value
+        self.description = description
+    }
+}
+
 public struct MaterialDefinition: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var name: String
@@ -177,6 +196,25 @@ public struct BodyBounds: Codable, Hashable, Sendable {
     )
 }
 
+public struct BodyVariableBindings: Codable, Hashable, Sendable {
+    public var width: String?
+    public var height: String?
+    public var depth: String?
+    public var radius: String?
+
+    public init(
+        width: String? = nil,
+        height: String? = nil,
+        depth: String? = nil,
+        radius: String? = nil
+    ) {
+        self.width = width
+        self.height = height
+        self.depth = depth
+        self.radius = radius
+    }
+}
+
 public struct BodyTransform: Codable, Hashable, Sendable {
     public var position: Vec3
     public var rotationDegrees: Vec3
@@ -199,6 +237,7 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable {
     public var primitive: PrimitiveKind
     public var parameters: PrimitiveParameters
     public var transform: BodyTransform
+    public var variableBindings: BodyVariableBindings
     public var materialID: UUID?
     public var isVisible: Bool
 
@@ -208,6 +247,7 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable {
         primitive: PrimitiveKind,
         parameters: PrimitiveParameters,
         transform: BodyTransform = BodyTransform(),
+        variableBindings: BodyVariableBindings = BodyVariableBindings(),
         materialID: UUID? = nil,
         isVisible: Bool = true
     ) {
@@ -216,6 +256,7 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable {
         self.primitive = primitive
         self.parameters = parameters
         self.transform = transform
+        self.variableBindings = variableBindings
         self.materialID = materialID
         self.isVisible = isVisible
     }
@@ -284,6 +325,37 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable {
         parameters.sanitize(for: primitive)
     }
 
+    public mutating func applyVariables(_ variablesByName: [String: Double]) {
+        func resolvedValue(for variableName: String?) -> Double? {
+            guard let variableName else { return nil }
+            let trimmed = variableName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return variablesByName[trimmed]
+        }
+
+        switch primitive {
+        case .box, .sheet:
+            if let width = resolvedValue(for: variableBindings.width) {
+                parameters.size.x = width
+            }
+            if let height = resolvedValue(for: variableBindings.height) {
+                parameters.size.y = height
+            }
+            if let depth = resolvedValue(for: variableBindings.depth) {
+                parameters.size.z = depth
+            }
+        case .cylinder:
+            if let radius = resolvedValue(for: variableBindings.radius) {
+                parameters.radius = radius
+            }
+            if let height = resolvedValue(for: variableBindings.height) {
+                parameters.height = height
+            }
+        }
+
+        parameters.sanitize(for: primitive)
+    }
+
     public static func make(kind: PrimitiveKind, index: Int, bounds: BodyBounds? = nil, name: String? = nil) -> CADBody {
         var body: CADBody
 
@@ -320,11 +392,18 @@ public struct CADProject: Codable, Sendable {
     public var units: String
     public var bodies: [CADBody]
     public var materials: [MaterialDefinition]
+    public var variables: [CADVariable]
 
-    public init(units: String = "mm", bodies: [CADBody], materials: [MaterialDefinition]) {
+    public init(
+        units: String = "mm",
+        bodies: [CADBody],
+        materials: [MaterialDefinition],
+        variables: [CADVariable]
+    ) {
         self.units = units
         self.bodies = bodies
         self.materials = materials
+        self.variables = variables
     }
 }
 

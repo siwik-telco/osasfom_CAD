@@ -1,8 +1,8 @@
-import AntennaCADCore
+import osasfom_cadCore
 import SwiftUI
 
 @main
-struct AntennaCADApp: App {
+struct osasfom_cad: App {
     @StateObject private var document = CADDocument()
 
     var body: some Scene {

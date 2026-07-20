@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:osasfom_cad}",
+            "name": "Debug osasfom_cad",
+            "target": "osasfom_cad",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug osasfom_cad"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:osasfom_cad}",
+            "name": "Release osasfom_cad",
+            "target": "osasfom_cad",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release osasfom_cad"
+        }
+    ]
+}

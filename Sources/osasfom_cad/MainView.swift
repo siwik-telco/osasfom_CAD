@@ -1,4 +1,4 @@
-import AntennaCADCore
+import osasfom_cadCore
 import AppKit
 import SceneKit
 import SwiftUI
@@ -64,7 +64,7 @@ struct MainView: View {
     private func exportProject(document: CADDocument) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
-        panel.nameFieldStringValue = "antenna-project.json"
+        panel.nameFieldStringValue = "osasfom_cad-project.json"
         panel.canCreateDirectories = true
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -147,7 +147,7 @@ private struct SceneWorkspaceView: View {
                 .background(Color.black.opacity(0.96))
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("AntennaCAD")
+                Text("osasfom_cad")
                     .font(.headline)
                 Text("Manual CAD workspace for antenna geometry")
                     .font(.caption)

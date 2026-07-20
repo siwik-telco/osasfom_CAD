@@ -2,27 +2,27 @@
 import PackageDescription
 
 let package = Package(
-    name: "AntennaCAD",
+    name: "osasfom_cad",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .library(
-            name: "AntennaCADCore",
-            targets: ["AntennaCADCore"]
+            name: "osasfom_cadCore",
+            targets: ["osasfom_cadCore"]
         ),
         .executable(
-            name: "AntennaCADApp",
-            targets: ["AntennaCADApp"]
+            name: "osasfom_cad",
+            targets: ["osasfom_cad"]
         )
     ],
     targets: [
         .target(
-            name: "AntennaCADCore"
+            name: "osasfom_cadCore"
         ),
         .executableTarget(
-            name: "AntennaCADApp",
-            dependencies: ["AntennaCADCore"]
+            name: "osasfom_cad",
+            dependencies: ["osasfom_cadCore"]
         )
     ]
 )

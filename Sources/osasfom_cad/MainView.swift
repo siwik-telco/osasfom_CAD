@@ -513,7 +513,7 @@ private struct AddBodySheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String = ""
-    @State private var bounds: BodyBounds
+    @State private var boundsBindings: BodyBoundsBindings
 
     init(document: CADDocument, kind: PrimitiveKind) {
         self.document = document
@@ -521,29 +521,39 @@ private struct AddBodySheet: View {
 
         switch kind {
         case .box:
-            _bounds = State(initialValue: .defaultBox)
+            _boundsBindings = State(initialValue: BodyBoundsBindings(bounds: .defaultBox))
         case .cylinder:
-            _bounds = State(initialValue: .defaultCylinder)
+            _boundsBindings = State(initialValue: BodyBoundsBindings(bounds: .defaultCylinder))
         case .sheet:
-            _bounds = State(initialValue: .defaultSheet)
+            _boundsBindings = State(initialValue: BodyBoundsBindings(bounds: .defaultSheet))
         }
     }
-
-    private let numberFormat = FloatingPointFormatStyle<Double>.number.precision(.fractionLength(3))
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Add \(kind.displayName)")
                 .font(.title2.weight(.semibold))
 
-            Text("Define the spatial extent of the new solid using X/Y/Z min and max values.")
+            Text("Define the spatial extent of the new solid using X/Y/Z min and max values. You can enter plain numbers or variable names.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
             TextField("Element name (optional)", text: $name)
                 .textFieldStyle(.roundedBorder)
 
-            BodyBoundsFields(bounds: $bounds, numberFormat: numberFormat)
+            BodyBoundsBindingFields(boundsBindings: $boundsBindings)
+
+            if !document.variableNames().isEmpty {
+                Text("Available variables: \(document.variableNames().joined(separator: ", "))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if resolvedBounds == nil {
+                Text("Some fields do not resolve. Use a number or an existing variable name.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
 
             if kind == .cylinder {
                 Text("For cylinders, radius is derived from the smaller X/Z span and height from the Y span.")
@@ -559,17 +569,22 @@ private struct AddBodySheet: View {
                 }
 
                 Button("Add") {
-                    var sanitizedBounds = bounds
-                    sanitizedBounds.sanitize()
                     let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                    document.addBody(kind, bounds: sanitizedBounds, name: trimmedName.isEmpty ? nil : trimmedName)
-                    dismiss()
+                    let wasAdded = document.addBody(kind, boundsBindings: boundsBindings, name: trimmedName.isEmpty ? nil : trimmedName)
+                    if wasAdded {
+                        dismiss()
+                    }
                 }
                 .keyboardShortcut(.defaultAction)
+                .disabled(resolvedBounds == nil)
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(width: 460)
+    }
+
+    private var resolvedBounds: BodyBounds? {
+        boundsBindings.resolved(using: document.variableValuesByName())
     }
 }
 
@@ -589,6 +604,32 @@ private struct BodyBoundsEditorView: View {
                 bodyModel.applyBounds(newBounds)
             }
         )
+    }
+}
+
+private struct BodyBoundsBindingFields: View {
+    @Binding var boundsBindings: BodyBoundsBindings
+
+    var body: some View {
+        VStack(spacing: 10) {
+            bindingRow(axis: "X", minValue: $boundsBindings.xMin, maxValue: $boundsBindings.xMax)
+            bindingRow(axis: "Y", minValue: $boundsBindings.yMin, maxValue: $boundsBindings.yMax)
+            bindingRow(axis: "Z", minValue: $boundsBindings.zMin, maxValue: $boundsBindings.zMax)
+        }
+    }
+
+    private func bindingRow(axis: String, minValue: Binding<String>, maxValue: Binding<String>) -> some View {
+        HStack {
+            Text(axis)
+                .frame(width: 20, alignment: .leading)
+                .foregroundStyle(.secondary)
+
+            TextField("\(axis) min", text: minValue)
+                .textFieldStyle(.roundedBorder)
+
+            TextField("\(axis) max", text: maxValue)
+                .textFieldStyle(.roundedBorder)
+        }
     }
 }
 

@@ -119,7 +119,7 @@ public final class CADDocument: ObservableObject {
             z: Expression(source: "lambda / 4")
         )
         state.simulation.ports = [
-            Port(
+            SimulationPort(
                 name: "Feed",
                 kind: .lumped,
                 region: BoundsExpression(
@@ -224,7 +224,7 @@ public final class CADDocument: ObservableObject {
         resolved.body(id: selectedBodyID)
     }
 
-    public var selectedPort: Port? {
+    public var selectedPort: SimulationPort? {
         guard let selectedPortID else { return nil }
         return state.simulation.ports.first { $0.id == selectedPortID }
     }
@@ -285,10 +285,14 @@ public final class CADDocument: ObservableObject {
             return state.bodies[neighbourIndex].id
         }()
 
+        // Captured before the mutation: `perform` clears a selection pointing at
+        // a body that no longer exists, so testing afterwards is always false.
+        let wasSelected = selectedBodyID == id
+
         perform("Delete \(name)") { state in
             state.bodies.remove(at: index)
         }
-        if selectedBodyID == id {
+        if wasSelected {
             selectedBodyID = nextSelection
         }
     }
@@ -441,8 +445,8 @@ public final class CADDocument: ObservableObject {
     @discardableResult
     public func addPort() -> UUID {
         // Default to a small gap at the origin along Y; the user positions it.
-        let port = Port(
-            name: state.uniquePortName(base: "Port"),
+        let port = SimulationPort(
+            name: state.uniquePortName(base: "SimulationPort"),
             kind: .lumped,
             region: BoundsExpression(
                 xMin: Expression(0),
@@ -454,7 +458,7 @@ public final class CADDocument: ObservableObject {
             ),
             direction: .y
         )
-        perform("Add Port") { state in
+        perform("Add SimulationPort") { state in
             state.simulation.ports.append(port)
         }
         selectedPortID = port.id
@@ -465,7 +469,7 @@ public final class CADDocument: ObservableObject {
         _ id: UUID,
         actionName: String,
         coalescingKey: String? = nil,
-        _ mutation: (inout Port) -> Void
+        _ mutation: (inout SimulationPort) -> Void
     ) {
         perform(actionName, coalescingKey: coalescingKey) { state in
             guard let index = state.simulation.ports.firstIndex(where: { $0.id == id }) else { return }

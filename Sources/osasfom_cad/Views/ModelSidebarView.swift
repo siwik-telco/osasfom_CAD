@@ -41,7 +41,7 @@ struct ModelSidebarView: View {
             List(selection: $document.selectedBodyID) {
                 ForEach(document.state.bodies) { body in
                     BodyRow(
-                        body: body,
+                        model: body,
                         severity: severity(for: body.id),
                         isResolved: !document.resolved.failedBodyIDs.contains(body.id),
                         toggleVisibility: {
@@ -86,20 +86,20 @@ struct ModelSidebarView: View {
 }
 
 private struct BodyRow: View {
-    let body: CADBody
+    let model: CADBody
     let severity: Diagnostic.Severity?
     let isResolved: Bool
     let toggleVisibility: () -> Void
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: body.kind.symbolName)
+            Image(systemName: model.kind.symbolName)
                 .foregroundStyle(isResolved ? Color.primary : Color.red)
                 .frame(width: 16)
 
-            Text(body.name.isEmpty ? "Untitled" : body.name)
+            Text(model.name.isEmpty ? "Untitled" : model.name)
                 .lineLimit(1)
-                .foregroundStyle(body.isVisible ? .primary : .secondary)
+                .foregroundStyle(model.isVisible ? .primary : .secondary)
 
             Spacer(minLength: 4)
 
@@ -114,7 +114,7 @@ private struct BodyRow: View {
             }
 
             Button(action: toggleVisibility) {
-                Image(systemName: body.isVisible ? "eye" : "eye.slash")
+                Image(systemName: model.isVisible ? "eye" : "eye.slash")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

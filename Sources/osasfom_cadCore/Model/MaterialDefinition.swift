@@ -155,10 +155,25 @@ public struct MaterialDefinition: Identifiable, Codable, Hashable, Sendable {
     }
 
     /// Sets `electricConductivity` from a loss tangent at a reference frequency.
+    ///
+    /// The result is rounded to 12 significant digits. That is far below any
+    /// physical relevance but keeps the value safely inside what Foundation's
+    /// `JSONEncoder` can round-trip — its 17-digit output does not always decode
+    /// back to the same `Double`, which would otherwise perturb a material every
+    /// time the project was saved and reopened.
     public mutating func setLossTangent(_ tangent: Double, atHertz hertz: Double) {
         guard hertz > 0 else { return }
         let omega = 2 * Double.pi * hertz
-        electricConductivity = tangent * omega * epsilonR * 8.854_187_812_8e-12
+        let conductivity = tangent * omega * epsilonR * 8.854_187_812_8e-12
+        electricConductivity = Self.roundedToSignificantDigits(conductivity, digits: 12)
+    }
+
+    static func roundedToSignificantDigits(_ value: Double, digits: Int) -> Double {
+        guard value != 0, value.isFinite else { return value }
+        let exponent = (log10(abs(value))).rounded(.down)
+        let factor = pow(10.0, Double(digits - 1) - exponent)
+        guard factor.isFinite, factor != 0 else { return value }
+        return (value * factor).rounded() / factor
     }
 
     /// Decodes tolerantly so files written by the earlier prototype — where

@@ -112,10 +112,12 @@ public enum ModelResolver {
                 let size = Vec3(x: width, y: height, z: depth)
                 diagnostics.append(
                     contentsOf: extentDiagnostics(
-                        size: size,
                         subject: subject,
-                        allowZeroOn: nil,
-                        labels: ["primitive.width": width, "primitive.height": height, "primitive.depth": depth]
+                        labels: [
+                            "primitive.width": width,
+                            "primitive.height": height,
+                            "primitive.depth": depth
+                        ]
                     )
                 )
                 shape = size.components.allSatisfy { $0 > 0 } ? .box(size: size) : nil
@@ -226,9 +228,7 @@ public enum ModelResolver {
     }
 
     private static func extentDiagnostics(
-        size: Vec3,
         subject: Diagnostic.Subject,
-        allowZeroOn: Axis?,
         labels: [String: Double]
     ) -> [Diagnostic] {
         labels.sorted { $0.key < $1.key }.compactMap { field, value in
@@ -432,7 +432,7 @@ public enum ModelResolver {
 
             if bounds.isInverted {
                 diagnostics.append(
-                    .error(portSubject, field: "region", "Port minimum exceeds its maximum.")
+                    .error(portSubject, field: "region", "SimulationPort minimum exceeds its maximum.")
                 )
                 continue
             }
@@ -457,7 +457,7 @@ public enum ModelResolver {
 
             if let domain, !domain.contains(bounds) {
                 diagnostics.append(
-                    .warning(portSubject, field: "region", "Port lies partly outside the computational domain.")
+                    .warning(portSubject, field: "region", "SimulationPort lies partly outside the computational domain.")
                 )
             }
 

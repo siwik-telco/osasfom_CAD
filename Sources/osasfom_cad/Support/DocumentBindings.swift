@@ -131,14 +131,14 @@ extension CADDocument {
 
     func portBinding<Value: Equatable>(
         _ id: UUID,
-        _ keyPath: WritableKeyPath<Port, Value>,
+        _ keyPath: WritableKeyPath<SimulationPort, Value>,
         actionName: String,
         field: String
     ) -> Binding<Value> {
         Binding(
             get: {
                 self.state.simulation.ports.first { $0.id == id }?[keyPath: keyPath]
-                    ?? Port(name: "", region: .zero)[keyPath: keyPath]
+                    ?? SimulationPort(name: "", region: .zero)[keyPath: keyPath]
             },
             set: { newValue in
                 self.updatePort(

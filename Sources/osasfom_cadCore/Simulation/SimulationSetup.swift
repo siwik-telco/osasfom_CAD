@@ -326,7 +326,7 @@ public enum PortKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public struct Port: Identifiable, Codable, Hashable, Sendable, ExpressionWalkable {
+public struct SimulationPort: Identifiable, Codable, Hashable, Sendable, ExpressionWalkable {
     public let id: UUID
     public var name: String
     public var kind: PortKind
@@ -495,7 +495,7 @@ public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
     public var boundaries: BoundarySettings
     public var mesh: MeshSettings
     public var excitation: Excitation
-    public var ports: [Port]
+    public var ports: [SimulationPort]
     public var monitors: [FieldMonitor]
     public var solver: SolverSettings
 
@@ -505,7 +505,7 @@ public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
         boundaries: BoundarySettings = .openAllSides,
         mesh: MeshSettings = MeshSettings(),
         excitation: Excitation = Excitation(),
-        ports: [Port] = [],
+        ports: [SimulationPort] = [],
         monitors: [FieldMonitor] = [],
         solver: SolverSettings = SolverSettings()
     ) {

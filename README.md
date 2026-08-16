@@ -4,7 +4,13 @@ A macOS CAD front-end for building antenna geometry and FDTD simulation setups.
 
 Geometry is **parametric**: every dimension, position and rotation is an
 expression, so a patch can be `0.49 * lambda / sqrt(4.3)` and follow its
-variables. The model stores only the source text; numbers are derived.
+variables. The model stores only the source text; numbers are derived.<br>
+## References
+
+This project is an open source project and uses existing solutions for EMF solving problems: 
+- [openEMS](https://github.com/thliebig/openEMS) — reference implementation used for the FDTD solver.
+- [CSXCAD](https://github.com/thliebig/CSXCAD) — geometry and mesh handling.
+
 
 ## Screenshots - notice there is a lot to do..
 Main interface with halfwave dipole model

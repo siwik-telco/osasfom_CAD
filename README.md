@@ -15,7 +15,7 @@ Dipole model with lumped port created
 
 
 Main interface of an app with model of patch antenna
-![interface](images/Interface 1.png)
+![interface](images/Interface.png)
 
 
 ## Structure

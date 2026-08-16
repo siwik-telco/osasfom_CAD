@@ -6,6 +6,18 @@ Geometry is **parametric**: every dimension, position and rotation is an
 expression, so a patch can be `0.49 * lambda / sqrt(4.3)` and follow its
 variables. The model stores only the source text; numbers are derived.
 
+## Screenshots - notice there is a lot to do..
+Main interface with halfwave dipole model
+![interface.dipole](images/pov.png)
+
+Dipole model with lumped port created
+![port_lumped](images/Port.png)
+
+
+Main interface of an app with model of patch antenna
+![interface](images/Interface%201.png)
+
+
 ## Structure
 
 ```text

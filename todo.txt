@@ -1,0 +1,1 @@
+- Change the way of definition of primitive to min to max approach

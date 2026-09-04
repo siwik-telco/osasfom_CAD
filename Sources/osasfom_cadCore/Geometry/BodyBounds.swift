@@ -103,6 +103,12 @@ public struct BodyBounds: Codable, Hashable, Sendable {
             && zMin - tolerance <= other.zMin && other.zMax <= zMax + tolerance
     }
 
+    public func contains(_ point: Vec3, tolerance: Double = 1e-9) -> Bool {
+        xMin - tolerance <= point.x && point.x <= xMax + tolerance
+            && yMin - tolerance <= point.y && point.y <= yMax + tolerance
+            && zMin - tolerance <= point.z && point.z <= zMax + tolerance
+    }
+
     public func intersects(_ other: BodyBounds) -> Bool {
         xMin <= other.xMax && other.xMin <= xMax
             && yMin <= other.yMax && other.yMin <= yMax

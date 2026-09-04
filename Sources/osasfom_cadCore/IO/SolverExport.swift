@@ -156,13 +156,26 @@ public struct SolverExport: Encodable, Sendable {
         public let stepRiseTimeSeconds: Double?
     }
 
+    /// Solver-facing port. A lumped port is a two-terminal series source + R
+    /// on the axis-aligned segment `beginMeters` → `endMeters`. The FDTD
+    /// kernel stamps that segment onto Yee edges, records V(t) and I(t), and
+    /// obtains resonance from S11(f) or Zin(f) after a DFT.
     public struct PortRecord: Encodable, Sendable {
         public let id: String
         public let name: String
         public let kind: String
+        /// First terminal, metres. Present for lumped ports.
+        public let beginMeters: VectorRecord?
+        /// Second terminal, metres. Voltage is the line integral begin → end.
+        public let endMeters: VectorRecord?
+        /// Axis-aligned box of the port. For lumped ports this is the AABB of
+        /// the two terminals (a line); for waveguide ports it is the aperture.
         public let regionMeters: BoxRecord
+        /// Grid axis of the gap (lumped) or of propagation (waveguide).
         public let direction: String
+        /// True when the lumped feed points along −direction (end < begin).
         public let isReversed: Bool
+        /// Series resistance of the lumped element, ohm.
         public let impedanceOhm: Double
         public let isExcited: Bool
         public let amplitude: Double
@@ -318,6 +331,8 @@ public enum SolverExportEncoder {
                 id: port.id.uuidString,
                 name: port.name,
                 kind: port.kind.rawValue,
+                beginMeters: port.begin.map { SolverExport.VectorRecord(unit.toMeters($0)) },
+                endMeters: port.end.map { SolverExport.VectorRecord(unit.toMeters($0)) },
                 regionMeters: SolverExport.BoxRecord(port.bounds, unit: unit),
                 direction: port.direction.rawValue,
                 isReversed: port.isReversed,

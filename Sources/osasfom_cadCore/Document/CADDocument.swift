@@ -122,15 +122,16 @@ public final class CADDocument: ObservableObject {
             SimulationPort(
                 name: "Feed",
                 kind: .lumped,
-                region: BoundsExpression(
-                    xMin: Expression(source: "patch_w / 6"),
-                    xMax: Expression(source: "patch_w / 6"),
-                    yMin: Expression(0),
-                    yMax: Expression(source: "h_sub"),
-                    zMin: Expression(0),
-                    zMax: Expression(0)
+                begin: Vector3Expression(
+                    x: Expression(source: "patch_w / 6"),
+                    y: Expression(0),
+                    z: Expression(0)
                 ),
-                direction: .y,
+                end: Vector3Expression(
+                    x: Expression(source: "patch_w / 6"),
+                    y: Expression(source: "h_sub"),
+                    z: Expression(0)
+                ),
                 impedanceOhm: 50
             )
         ]
@@ -446,17 +447,11 @@ public final class CADDocument: ObservableObject {
     public func addPort() -> UUID {
         // Default to a small gap at the origin along Y; the user positions it.
         let port = SimulationPort(
-            name: state.uniquePortName(base: "SimulationPort"),
+            name: state.uniquePortName(base: "Feed"),
             kind: .lumped,
-            region: BoundsExpression(
-                xMin: Expression(0),
-                xMax: Expression(0),
-                yMin: Expression(0),
-                yMax: Expression(1),
-                zMin: Expression(0),
-                zMax: Expression(0)
-            ),
-            direction: .y
+            begin: Vector3Expression(Vec3.zero),
+            end: Vector3Expression(Vec3(x: 0, y: 1, z: 0)),
+            impedanceOhm: 50
         )
         perform("Add SimulationPort") { state in
             state.simulation.ports.append(port)

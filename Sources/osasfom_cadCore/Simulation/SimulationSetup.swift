@@ -326,18 +326,24 @@ public enum PortKind: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-public struct SimulationPort: Identifiable, Codable, Hashable, Sendable, ExpressionWalkable {
+public struct SimulationPort: Identifiable, Hashable, Sendable, ExpressionWalkable {
     public let id: UUID
     public var name: String
     public var kind: PortKind
-    /// Extent of the port. For a lumped port this is the gap it bridges; the
-    /// span along `direction` is the gap length.
+    /// First terminal of a lumped port, project units. Voltage is from begin to end.
+    public var begin: Vector3Expression
+    /// Second terminal of a lumped port, project units.
+    public var end: Vector3Expression
+    /// Extent of a waveguide port. Ignored for lumped ports (the solver uses
+    /// the segment `begin` → `end`).
     public var region: BoundsExpression
-    /// Field orientation for a lumped port; propagation axis for a waveguide port.
+    /// Propagation axis for a waveguide port. For a lumped port this is
+    /// inferred from `end − begin` at resolve time.
     public var direction: Axis
-    /// Positive means the field points along +`direction`.
+    /// Waveguide polarity. Lumped polarity is begin → end.
     public var isReversed: Bool
-    /// Reference impedance, ohm.
+    /// Reference impedance of the lumped element, ohm. The FDTD kernel stamps
+    /// this as a series resistance across the gap.
     public var impedanceOhm: Double
     /// Whether this port drives the simulation. S-parameters are still recorded
     /// for passive ports.
@@ -351,7 +357,9 @@ public struct SimulationPort: Identifiable, Codable, Hashable, Sendable, Express
         id: UUID = UUID(),
         name: String,
         kind: PortKind = .lumped,
-        region: BoundsExpression,
+        begin: Vector3Expression,
+        end: Vector3Expression,
+        region: BoundsExpression = .zero,
         direction: Axis = .y,
         isReversed: Bool = false,
         impedanceOhm: Double = 50,
@@ -363,6 +371,8 @@ public struct SimulationPort: Identifiable, Codable, Hashable, Sendable, Express
         self.id = id
         self.name = name
         self.kind = kind
+        self.begin = begin
+        self.end = end
         self.region = region
         self.direction = direction
         self.isReversed = isReversed
@@ -373,8 +383,106 @@ public struct SimulationPort: Identifiable, Codable, Hashable, Sendable, Express
         self.modeIndex = modeIndex
     }
 
+    /// Box-defined port. For a lumped port the terminals are the min and max
+    /// faces along `direction` (legacy shape used before begin/end existed).
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        kind: PortKind = .lumped,
+        region: BoundsExpression,
+        direction: Axis = .y,
+        isReversed: Bool = false,
+        impedanceOhm: Double = 50,
+        isExcited: Bool = true,
+        amplitude: Double = 1,
+        phaseDegrees: Double = 0,
+        modeIndex: Int = 1
+    ) {
+        let terminals = Self.terminals(from: region, direction: direction, isReversed: isReversed)
+        self.init(
+            id: id,
+            name: name,
+            kind: kind,
+            begin: terminals.begin,
+            end: terminals.end,
+            region: region,
+            direction: direction,
+            isReversed: isReversed,
+            impedanceOhm: impedanceOhm,
+            isExcited: isExcited,
+            amplitude: amplitude,
+            phaseDegrees: phaseDegrees,
+            modeIndex: modeIndex
+        )
+    }
+
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {
+        begin.walkExpressions(transform)
+        end.walkExpressions(transform)
         region.walkExpressions(transform)
+    }
+
+    /// Min-face → max-face along `direction`, keeping the other two axes on
+    /// the region's lower corner. A zero-thickness box becomes a line segment.
+    public static func terminals(
+        from region: BoundsExpression,
+        direction: Axis,
+        isReversed: Bool
+    ) -> (begin: Vector3Expression, end: Vector3Expression) {
+        var begin = Vector3Expression(x: region.xMin, y: region.yMin, z: region.zMin)
+        var end = Vector3Expression(x: region.xMin, y: region.yMin, z: region.zMin)
+        begin[direction] = isReversed ? region.upper(on: direction) : region.lower(on: direction)
+        end[direction] = isReversed ? region.lower(on: direction) : region.upper(on: direction)
+        return (begin, end)
+    }
+}
+
+extension SimulationPort: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case id, name, kind, begin, end, region, direction, isReversed
+        case impedanceOhm, isExcited, amplitude, phaseDegrees, modeIndex
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        kind = try container.decodeIfPresent(PortKind.self, forKey: .kind) ?? .lumped
+        region = try container.decodeIfPresent(BoundsExpression.self, forKey: .region) ?? .zero
+        direction = try container.decodeIfPresent(Axis.self, forKey: .direction) ?? .y
+        isReversed = try container.decodeIfPresent(Bool.self, forKey: .isReversed) ?? false
+        impedanceOhm = try container.decodeIfPresent(Double.self, forKey: .impedanceOhm) ?? 50
+        isExcited = try container.decodeIfPresent(Bool.self, forKey: .isExcited) ?? true
+        amplitude = try container.decodeIfPresent(Double.self, forKey: .amplitude) ?? 1
+        phaseDegrees = try container.decodeIfPresent(Double.self, forKey: .phaseDegrees) ?? 0
+        modeIndex = try container.decodeIfPresent(Int.self, forKey: .modeIndex) ?? 1
+
+        if let begin = try container.decodeIfPresent(Vector3Expression.self, forKey: .begin),
+           let end = try container.decodeIfPresent(Vector3Expression.self, forKey: .end) {
+            self.begin = begin
+            self.end = end
+        } else {
+            let terminals = Self.terminals(from: region, direction: direction, isReversed: isReversed)
+            self.begin = terminals.begin
+            self.end = terminals.end
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(name, forKey: .name)
+        try container.encode(kind, forKey: .kind)
+        try container.encode(begin, forKey: .begin)
+        try container.encode(end, forKey: .end)
+        try container.encode(region, forKey: .region)
+        try container.encode(direction, forKey: .direction)
+        try container.encode(isReversed, forKey: .isReversed)
+        try container.encode(impedanceOhm, forKey: .impedanceOhm)
+        try container.encode(isExcited, forKey: .isExcited)
+        try container.encode(amplitude, forKey: .amplitude)
+        try container.encode(phaseDegrees, forKey: .phaseDegrees)
+        try container.encode(modeIndex, forKey: .modeIndex)
     }
 }
 

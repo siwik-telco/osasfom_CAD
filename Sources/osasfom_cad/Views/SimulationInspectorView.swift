@@ -319,7 +319,7 @@ struct SimulationInspectorView: View {
             Button {
                 document.addPort()
             } label: {
-                Label("Add SimulationPort", systemImage: "plus")
+                Label("Add lumped port", systemImage: "plus")
             }
         } header: {
             Text("Ports")

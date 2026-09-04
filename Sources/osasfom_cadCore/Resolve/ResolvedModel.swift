@@ -4,6 +4,9 @@ public struct ResolvedPort: Identifiable, Hashable, Sendable {
     public let id: UUID
     public let name: String
     public let kind: PortKind
+    /// Lumped terminals in project units. `nil` for waveguide ports.
+    public let begin: Vec3?
+    public let end: Vec3?
     public let bounds: BodyBounds
     public let direction: Axis
     public let isReversed: Bool
@@ -12,11 +15,15 @@ public struct ResolvedPort: Identifiable, Hashable, Sendable {
     public let amplitude: Double
     public let phaseDegrees: Double
     public let modeIndex: Int
+    /// Gap length along `direction`. For a lumped port this is |end − begin|.
+    public let gapLength: Double
 
     public init(
         id: UUID,
         name: String,
         kind: PortKind,
+        begin: Vec3? = nil,
+        end: Vec3? = nil,
         bounds: BodyBounds,
         direction: Axis,
         isReversed: Bool,
@@ -24,11 +31,14 @@ public struct ResolvedPort: Identifiable, Hashable, Sendable {
         isExcited: Bool,
         amplitude: Double,
         phaseDegrees: Double,
-        modeIndex: Int
+        modeIndex: Int,
+        gapLength: Double
     ) {
         self.id = id
         self.name = name
         self.kind = kind
+        self.begin = begin
+        self.end = end
         self.bounds = bounds
         self.direction = direction
         self.isReversed = isReversed
@@ -37,10 +47,8 @@ public struct ResolvedPort: Identifiable, Hashable, Sendable {
         self.amplitude = amplitude
         self.phaseDegrees = phaseDegrees
         self.modeIndex = modeIndex
+        self.gapLength = gapLength
     }
-
-    /// Gap length for a lumped port: the span along the field direction.
-    public var gapLength: Double { bounds.span(on: direction) }
 }
 
 public struct ResolvedMonitor: Identifiable, Hashable, Sendable {

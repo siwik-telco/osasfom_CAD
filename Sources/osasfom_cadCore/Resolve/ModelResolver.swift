@@ -421,77 +421,16 @@ public enum ModelResolver {
         var excitedPortCount = 0
         for port in setup.ports {
             let portSubject = Diagnostic.Subject.port(port.id)
-            let bounds: BodyBounds
-            do {
-                bounds = try port.region.value(variables: variables)
-            } catch {
-                let message = (error as? ExpressionError)?.description ?? "Invalid expression."
-                diagnostics.append(.error(portSubject, field: "region", message))
-                continue
+            if let resolved = resolvePort(
+                port,
+                variables: variables,
+                domain: domain,
+                diagnostics: &diagnostics,
+                subject: portSubject
+            ) {
+                if resolved.isExcited { excitedPortCount += 1 }
+                ports.append(resolved)
             }
-
-            if bounds.isInverted {
-                diagnostics.append(
-                    .error(portSubject, field: "region", "SimulationPort minimum exceeds its maximum.")
-                )
-                continue
-            }
-
-            let gap = bounds.span(on: port.direction)
-            if gap <= 0 {
-                diagnostics.append(
-                    .error(
-                        portSubject,
-                        field: "region",
-                        "A \(port.kind.displayName.lowercased()) needs a non-zero span along \(port.direction.displayName), which is its \(port.kind == .lumped ? "gap" : "propagation") direction."
-                    )
-                )
-                continue
-            }
-
-            if port.impedanceOhm <= 0 {
-                diagnostics.append(
-                    .error(portSubject, field: "impedanceOhm", "Reference impedance must be positive.")
-                )
-            }
-
-            if let domain, !domain.contains(bounds) {
-                diagnostics.append(
-                    .warning(portSubject, field: "region", "SimulationPort lies partly outside the computational domain.")
-                )
-            }
-
-            if port.kind == .waveguide {
-                let (first, second) = port.direction.perpendicular
-                if bounds.span(on: first) <= 0 || bounds.span(on: second) <= 0 {
-                    diagnostics.append(
-                        .error(
-                            portSubject,
-                            field: "region",
-                            "A waveguide port needs a non-zero cross-section perpendicular to \(port.direction.displayName)."
-                        )
-                    )
-                    continue
-                }
-            }
-
-            if port.isExcited { excitedPortCount += 1 }
-
-            ports.append(
-                ResolvedPort(
-                    id: port.id,
-                    name: port.name,
-                    kind: port.kind,
-                    bounds: bounds,
-                    direction: port.direction,
-                    isReversed: port.isReversed,
-                    impedanceOhm: port.impedanceOhm,
-                    isExcited: port.isExcited,
-                    amplitude: port.amplitude,
-                    phaseDegrees: port.phaseDegrees,
-                    modeIndex: port.modeIndex
-                )
-            )
         }
 
         if setup.ports.isEmpty {
@@ -608,6 +547,150 @@ public enum ModelResolver {
             ),
             diagnostics: diagnostics
         )
+    }
+
+    private static func resolvePort(
+        _ port: SimulationPort,
+        variables: [String: Double],
+        domain: BodyBounds?,
+        diagnostics: inout [Diagnostic],
+        subject: Diagnostic.Subject
+    ) -> ResolvedPort? {
+        func expressionMessage(_ error: Error) -> String {
+            (error as? ExpressionError)?.description ?? "Invalid expression."
+        }
+
+        if port.impedanceOhm <= 0 {
+            diagnostics.append(
+                .error(subject, field: "impedanceOhm", "Reference impedance must be positive.")
+            )
+        }
+
+        switch port.kind {
+        case .lumped:
+            let begin: Vec3
+            let end: Vec3
+            do {
+                begin = try port.begin.value(variables: variables)
+            } catch {
+                diagnostics.append(.error(subject, field: "begin", expressionMessage(error)))
+                return nil
+            }
+            do {
+                end = try port.end.value(variables: variables)
+            } catch {
+                diagnostics.append(.error(subject, field: "end", expressionMessage(error)))
+                return nil
+            }
+
+            switch LumpedPortGeometry.from(begin: begin, end: end) {
+            case .failure(.coincidentTerminals):
+                diagnostics.append(
+                    .error(
+                        subject,
+                        field: "end",
+                        "A lumped port needs distinct begin and end terminals; the gap is the feed the solver stamps onto Yee edges."
+                    )
+                )
+                return nil
+            case .failure(.notAxisAligned):
+                diagnostics.append(
+                    .error(
+                        subject,
+                        field: "end",
+                        "A lumped port must be axis-aligned (the two terminals may differ on only one of X, Y or Z) so the feed lies on Yee edges."
+                    )
+                )
+                return nil
+            case .success(let geometry):
+                if let domain, !domain.contains(begin) || !domain.contains(end) {
+                    diagnostics.append(
+                        .warning(
+                            subject,
+                            field: "begin",
+                            "Lumped-port terminals lie partly outside the computational domain."
+                        )
+                    )
+                }
+                return ResolvedPort(
+                    id: port.id,
+                    name: port.name,
+                    kind: .lumped,
+                    begin: geometry.begin,
+                    end: geometry.end,
+                    bounds: geometry.bounds,
+                    direction: geometry.direction,
+                    isReversed: geometry.polarityFlipped,
+                    impedanceOhm: port.impedanceOhm,
+                    isExcited: port.isExcited,
+                    amplitude: port.amplitude,
+                    phaseDegrees: port.phaseDegrees,
+                    modeIndex: port.modeIndex,
+                    gapLength: geometry.gapLength
+                )
+            }
+
+        case .waveguide:
+            let bounds: BodyBounds
+            do {
+                bounds = try port.region.value(variables: variables)
+            } catch {
+                diagnostics.append(.error(subject, field: "region", expressionMessage(error)))
+                return nil
+            }
+
+            if bounds.isInverted {
+                diagnostics.append(
+                    .error(subject, field: "region", "SimulationPort minimum exceeds its maximum.")
+                )
+                return nil
+            }
+
+            let gap = bounds.span(on: port.direction)
+            if gap <= 0 {
+                diagnostics.append(
+                    .error(
+                        subject,
+                        field: "region",
+                        "A waveguide port needs a non-zero span along \(port.direction.displayName), which is its propagation direction."
+                    )
+                )
+                return nil
+            }
+
+            let (first, second) = port.direction.perpendicular
+            if bounds.span(on: first) <= 0 || bounds.span(on: second) <= 0 {
+                diagnostics.append(
+                    .error(
+                        subject,
+                        field: "region",
+                        "A waveguide port needs a non-zero cross-section perpendicular to \(port.direction.displayName)."
+                    )
+                )
+                return nil
+            }
+
+            if let domain, !domain.contains(bounds) {
+                diagnostics.append(
+                    .warning(subject, field: "region", "SimulationPort lies partly outside the computational domain.")
+                )
+            }
+
+            return ResolvedPort(
+                id: port.id,
+                name: port.name,
+                kind: .waveguide,
+                bounds: bounds,
+                direction: port.direction,
+                isReversed: port.isReversed,
+                impedanceOhm: port.impedanceOhm,
+                isExcited: port.isExcited,
+                amplitude: port.amplitude,
+                phaseDegrees: port.phaseDegrees,
+                modeIndex: port.modeIndex,
+                gapLength: gap
+            )
+        }
     }
 
     private struct MeshOutcome {

@@ -96,12 +96,6 @@ struct BodyInspectorView: View {
                     variables: variables,
                     unitSymbol: unit
                 )
-                ExpressionRow(
-                    label: "Length",
-                    expression: cylinderBinding(\.length, field: "length"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
                 Picker(
                     "Axis",
                     selection: Binding(
@@ -118,6 +112,19 @@ struct BodyInspectorView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                ExpressionRow(
+                    label: "Begin (\(spec.axis.displayName))",
+                    expression: cylinderBinding(\.begin, field: "begin"),
+                    variables: variables,
+                    unitSymbol: unit,
+                    help: "Absolute coordinate of the first terminal along \(spec.axis.displayName). Position \(spec.axis.displayName) is unused for a cylinder — set the extent here instead."
+                )
+                ExpressionRow(
+                    label: "End (\(spec.axis.displayName))",
+                    expression: cylinderBinding(\.end, field: "end"),
+                    variables: variables,
+                    unitSymbol: unit
+                )
 
             case .sheet(let spec):
                 Picker(
@@ -175,28 +182,40 @@ struct BodyInspectorView: View {
     }
 
     private var transformSection: some View {
-        Section("Transform") {
+        let cylinderAxis = body_?.primitive.cylinderSpec?.axis
+        return Section("Transform") {
             LabeledContent("Position") {
                 EmptyView()
             }
-            ExpressionRow(
-                label: "X",
-                expression: transformBinding(\.position.x, field: "position.x"),
-                variables: variables,
-                unitSymbol: unit
-            )
-            ExpressionRow(
-                label: "Y",
-                expression: transformBinding(\.position.y, field: "position.y"),
-                variables: variables,
-                unitSymbol: unit
-            )
-            ExpressionRow(
-                label: "Z",
-                expression: transformBinding(\.position.z, field: "position.z"),
-                variables: variables,
-                unitSymbol: unit
-            )
+            if cylinderAxis != .x {
+                ExpressionRow(
+                    label: "X",
+                    expression: transformBinding(\.position.x, field: "position.x"),
+                    variables: variables,
+                    unitSymbol: unit
+                )
+            }
+            if cylinderAxis != .y {
+                ExpressionRow(
+                    label: "Y",
+                    expression: transformBinding(\.position.y, field: "position.y"),
+                    variables: variables,
+                    unitSymbol: unit
+                )
+            }
+            if cylinderAxis != .z {
+                ExpressionRow(
+                    label: "Z",
+                    expression: transformBinding(\.position.z, field: "position.z"),
+                    variables: variables,
+                    unitSymbol: unit
+                )
+            }
+            if let cylinderAxis {
+                Text("Position \(cylinderAxis.displayName) is set by the cylinder's Begin/End above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             Divider()
 

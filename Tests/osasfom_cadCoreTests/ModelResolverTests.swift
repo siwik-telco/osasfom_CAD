@@ -117,17 +117,17 @@ final class ModelResolverTests: XCTestCase {
         XCTAssertEqual(sheetResult.bodies.first?.shape.localSize.y, 0)
     }
 
-    func testCylinderRequiresPositiveRadiusAndLength() {
+    func testCylinderRequiresPositiveRadiusAndDistinctTerminals() {
         let body = CADBody(
             name: "Probe",
             primitive: .cylinder(
-                CylinderSpec(radius: Expression(0), length: Expression(-5), axis: .x)
+                CylinderSpec(radius: Expression(0), begin: Expression(5), end: Expression(5), axis: .x)
             )
         )
         let resolved = ModelResolver.resolve(makeState(bodies: [body]))
         let messages = resolved.diagnostics(for: .body(body.id)).map(\.message)
         XCTAssertTrue(messages.contains { $0.contains("Radius") })
-        XCTAssertTrue(messages.contains { $0.contains("Length") })
+        XCTAssertTrue(messages.contains { $0.contains("differ") })
     }
 
     func testOverlappingBodiesAtEqualPriorityAreWarnedAbout() {

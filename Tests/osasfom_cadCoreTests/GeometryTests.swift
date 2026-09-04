@@ -103,7 +103,7 @@ final class GeometryTests: XCTestCase {
 
     func testCylinderLocalSizeFollowsItsAxis() {
         for axis in Axis.allCases {
-            let shape = ResolvedShape.cylinder(radius: 2, length: 30, axis: axis)
+            let shape = ResolvedShape.cylinder(radius: 2, begin: -15, end: 15, axis: axis)
             let size = shape.localSize
             XCTAssertEqual(size[axis], 30)
             let (first, second) = axis.perpendicular
@@ -132,7 +132,7 @@ final class GeometryTests: XCTestCase {
 
         // A cylinder's radius cannot be recovered from two independent spans, so
         // the editor is refused rather than silently discarding one of them.
-        let cylinder = makeResolvedBody(shape: .cylinder(radius: 1, length: 4, axis: .y))
+        let cylinder = makeResolvedBody(shape: .cylinder(radius: 1, begin: -2, end: 2, axis: .y))
         XCTAssertEqual(cylinder.boundsEditability, .lossyForKind(.cylinder))
     }
 

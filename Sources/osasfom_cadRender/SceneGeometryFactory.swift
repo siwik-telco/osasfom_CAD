@@ -28,9 +28,9 @@ public enum SceneGeometryFactory {
                 chamferRadius: 0
             )
 
-        case .cylinder(let radius, let length, _):
+        case .cylinder(let radius, let begin, let end, _):
             // SCNCylinder is Y-aligned; the node's own rotation orients it.
-            return SCNCylinder(radius: CGFloat(radius), height: CGFloat(length))
+            return SCNCylinder(radius: CGFloat(radius), height: CGFloat(abs(end - begin)))
 
         case .sheet(let size, let normal):
             guard size[normal] == 0 else {
@@ -58,7 +58,7 @@ public enum SceneGeometryFactory {
         case .box:
             return SCNVector3Zero
 
-        case .cylinder(_, _, let axis):
+        case .cylinder(_, _, _, let axis):
             return vector(axis.rotationFromYAxisDegrees)
 
         case .sheet(let size, let normal):

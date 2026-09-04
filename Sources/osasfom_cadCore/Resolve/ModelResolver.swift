@@ -127,20 +127,21 @@ public enum ModelResolver {
 
         case .cylinder(let spec):
             let radius = scalar(spec.radius, field: "primitive.radius")
-            let length = scalar(spec.length, field: "primitive.length")
-            if let radius, let length {
+            let begin = scalar(spec.begin, field: "primitive.begin")
+            let end = scalar(spec.end, field: "primitive.end")
+            if let radius, let begin, let end {
                 if radius <= 0 {
                     diagnostics.append(
                         .error(subject, field: "primitive.radius", "Radius must be greater than zero (got \(Expression.literalSource(radius))).")
                     )
                 }
-                if length <= 0 {
+                if begin == end {
                     diagnostics.append(
-                        .error(subject, field: "primitive.length", "Length must be greater than zero (got \(Expression.literalSource(length))).")
+                        .error(subject, field: "primitive.end", "Begin and end must differ along \(spec.axis.displayName); a zero-length cylinder has no volume.")
                     )
                 }
-                shape = radius > 0 && length > 0
-                    ? .cylinder(radius: radius, length: length, axis: spec.axis)
+                shape = radius > 0 && begin != end
+                    ? .cylinder(radius: radius, begin: begin, end: end, axis: spec.axis)
                     : nil
             } else {
                 shape = nil
@@ -182,9 +183,18 @@ public enum ModelResolver {
             }
         }
 
-        let position = vector(body.transform.position, field: "transform.position")
+        var position = vector(body.transform.position, field: "transform.position")
         let rotation = vector(body.transform.rotationDegrees, field: "transform.rotation")
         let scale = vector(body.transform.scale, field: "transform.scale")
+
+        // A cylinder's begin/end are absolute coordinates along its axis, not
+        // an extent centred on the body's position — so its resolved position
+        // on that one axis comes from the midpoint of begin/end instead of
+        // from transform.position. The other two axes still take their center
+        // from transform.position, same as every other primitive.
+        if case let .cylinder(_, begin, end, axis)? = shape {
+            position?[axis] = (begin + end) / 2
+        }
 
         if let scale, scale.components.contains(where: { $0 == 0 }) {
             diagnostics.append(

@@ -35,7 +35,7 @@ public struct LumpedPortGeometry: Hashable, Sendable {
     /// perpendicular axes). A mesher snaps grid lines to these coordinates.
     public let bounds: BodyBounds
 
-    public enum Failure: Equatable, Sendable {
+    public enum Failure: Error, Equatable, Sendable {
         /// Begin and end evaluate to the same point.
         case coincidentTerminals
         /// The feed has a component on more than one axis.

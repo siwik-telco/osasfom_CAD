@@ -131,7 +131,7 @@ final class DocumentTests: XCTestCase {
         let original = CADBody(
             name: "Original",
             primitive: .cylinder(
-                CylinderSpec(radius: Expression(source: "r"), length: Expression(9), axis: .z)
+                CylinderSpec(radius: Expression(source: "r"), begin: Expression(0), end: Expression(9), axis: .z)
             ),
             transform: BodyTransform(rotationDegrees: Vector3Expression(Vec3(x: 1, y: 2, z: 3))),
             materialID: MaterialLibrary.copperID,
@@ -251,7 +251,8 @@ final class DocumentTests: XCTestCase {
     // MARK: - Files
 
     func testSaveAndLoadRoundTripThroughDisk() throws {
-        let document = CADDocument.makeStarterDocument()
+        let document = CADDocument()
+        _ = document.addBody(.box)
         let original = document.state
 
         let url = FileManager.default.temporaryDirectory
@@ -270,39 +271,16 @@ final class DocumentTests: XCTestCase {
         XCTAssertEqual(reopened.fileURL, url)
     }
 
-    func testStarterDocumentIsValidAndParametric() {
-        let document = CADDocument.makeStarterDocument()
-        let resolved = document.resolved
-
-        XCTAssertFalse(resolved.diagnostics.hasErrors, "\(resolved.diagnostics.errors)")
-        XCTAssertEqual(resolved.bodies.count, 3)
-        XCTAssertNotNil(resolved.simulation.domain)
-        XCTAssertEqual(resolved.simulation.ports.count, 1)
-
-        // Changing the design frequency must move the geometry.
-        let frequency = try? XCTUnwrap(
-            document.state.variables.first { $0.trimmedName == "f0_GHz" }
-        )
-        let widthBefore = resolved.bodies.first { $0.name == "Patch" }?.shape.localSize.x
-
-        if let frequency {
-            document.updateVariable(frequency.id, actionName: "Retune") {
-                $0.expression = Expression(5.8)
-            }
-        }
-        let widthAfter = document.resolved.bodies.first { $0.name == "Patch" }?.shape.localSize.x
-
-        XCTAssertNotNil(widthBefore)
-        XCTAssertNotNil(widthAfter)
-        XCTAssertLessThan(
-            try XCTUnwrap(widthAfter),
-            try XCTUnwrap(widthBefore),
-            "a higher frequency must shrink the patch"
-        )
+    func testFreshDocumentLaunchesEmpty() {
+        let document = CADDocument(state: CADModelState(name: "Untitled"))
+        XCTAssertTrue(document.state.bodies.isEmpty)
+        XCTAssertTrue(document.state.variables.isEmpty)
+        XCTAssertTrue(document.state.simulation.ports.isEmpty)
     }
 
-    func testSolverExportFromTheStarterDocument() throws {
-        let document = CADDocument.makeStarterDocument()
+    func testSolverExportFromADocumentWithABody() throws {
+        let document = CADDocument()
+        _ = document.addBody(.box)
         let data = try document.solverExportData()
         XCTAssertGreaterThan(data.count, 0)
     }

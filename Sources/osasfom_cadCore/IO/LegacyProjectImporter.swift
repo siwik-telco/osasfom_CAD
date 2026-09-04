@@ -125,13 +125,21 @@ public enum LegacyProjectImporter {
             return Expression(source: name)
         }
 
+        // v1 cylinders were centred on their position along Y; v2 stores the
+        // terminals as absolute coordinates instead, so the old center and
+        // height are folded into begin/end here.
+        let legacyPositionY = legacy.transform?.position?.value.y ?? 0
+        let legacyPositionYSource = Expression.literalSource(legacyPositionY)
+
         let primitive: Primitive
         switch legacy.primitive {
         case "cylinder":
+            let height = extent(bindings?.height, fallback: legacy.parameters.height)
             primitive = .cylinder(
                 CylinderSpec(
                     radius: extent(bindings?.radius, fallback: legacy.parameters.radius),
-                    length: extent(bindings?.height, fallback: legacy.parameters.height),
+                    begin: Expression(source: "\(legacyPositionYSource) - (\(height.trimmed)) / 2"),
+                    end: Expression(source: "\(legacyPositionYSource) + (\(height.trimmed)) / 2"),
                     // v1 cylinders were always Y-aligned.
                     axis: .y
                 )

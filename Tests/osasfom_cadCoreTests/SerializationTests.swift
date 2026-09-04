@@ -33,7 +33,7 @@ final class SerializationTests: XCTestCase {
             CADBody(
                 name: "Probe",
                 primitive: .cylinder(
-                    CylinderSpec(radius: Expression(0.6), length: Expression(4), axis: .x)
+                    CylinderSpec(radius: Expression(0.6), begin: Expression(-2), end: Expression(2), axis: .x)
                 ),
                 materialID: MaterialLibrary.copperID,
                 priority: 20
@@ -93,7 +93,7 @@ final class SerializationTests: XCTestCase {
 
     func testPrimitiveJSONIsFlatAndDiscriminated() throws {
         let primitive = Primitive.cylinder(
-            CylinderSpec(radius: Expression(2), length: Expression(10), axis: .z)
+            CylinderSpec(radius: Expression(2), begin: Expression(0), end: Expression(10), axis: .z)
         )
         let data = try JSONEncoder().encode(primitive)
         let object = try XCTUnwrap(
@@ -166,7 +166,8 @@ final class SerializationTests: XCTestCase {
 
         let probe = try XCTUnwrap(state.bodies[1].primitive.cylinderSpec)
         XCTAssertEqual(probe.radius.source, "2.5")
-        XCTAssertEqual(probe.length.source, "30")
+        XCTAssertEqual(try probe.begin.value(), -15, "no legacy position was given, so the cylinder is centred on zero")
+        XCTAssertEqual(try probe.end.value(), 15)
         XCTAssertEqual(probe.axis, .y, "v1 cylinders were always Y-aligned")
 
         // The new library entries are topped up, and the whole thing resolves.

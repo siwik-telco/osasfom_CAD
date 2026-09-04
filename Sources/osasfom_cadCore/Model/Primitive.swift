@@ -64,21 +64,29 @@ public struct BoxSpec: Codable, Hashable, Sendable, ExpressionWalkable {
 
 public struct CylinderSpec: Codable, Hashable, Sendable, ExpressionWalkable {
     public var radius: Expression
-    /// Extent along `axis`.
-    public var length: Expression
+    /// Coordinate of the first terminal along `axis`, in the same absolute
+    /// frame as a body's position. Unlike a box or sheet, a cylinder is not
+    /// centred on its body's position along this axis — `begin`/`end` are
+    /// authoritative, so a monopole can start exactly at a ground plane
+    /// instead of being centred on it.
+    public var begin: Expression
+    /// Coordinate of the second terminal along `axis`.
+    public var end: Expression
     /// Which way the cylinder points. The old model hard-coded Y, which made
     /// coax probes and monopoles awkward.
     public var axis: Axis
 
-    public init(radius: Expression, length: Expression, axis: Axis = .y) {
+    public init(radius: Expression, begin: Expression, end: Expression, axis: Axis = .y) {
         self.radius = radius
-        self.length = length
+        self.begin = begin
+        self.end = end
         self.axis = axis
     }
 
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {
         transform(&radius)
-        transform(&length)
+        transform(&begin)
+        transform(&end)
     }
 }
 
@@ -223,7 +231,7 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
     )
 
     public static let defaultCylinder = Primitive.cylinder(
-        CylinderSpec(radius: Expression(2.5), length: Expression(30), axis: .y)
+        CylinderSpec(radius: Expression(2.5), begin: Expression(-15), end: Expression(15), axis: .y)
     )
 
     public static let defaultSheet = Primitive.sheet(
@@ -261,24 +269,36 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
             )
         case (.box(let spec), .cylinder):
             return .cylinder(
-                CylinderSpec(radius: Expression(source: "(\(spec.width.trimmed)) / 2"), length: spec.height, axis: .y)
+                CylinderSpec(
+                    radius: Expression(source: "(\(spec.width.trimmed)) / 2"),
+                    begin: Expression(source: "-(\(spec.height.trimmed)) / 2"),
+                    end: Expression(source: "(\(spec.height.trimmed)) / 2"),
+                    axis: .y
+                )
             )
         case (.sheet(let spec), .cylinder):
             return .cylinder(
-                CylinderSpec(radius: Expression(source: "(\(spec.width.trimmed)) / 2"), length: spec.thickness, axis: spec.normal)
+                CylinderSpec(
+                    radius: Expression(source: "(\(spec.width.trimmed)) / 2"),
+                    begin: Expression(source: "-(\(spec.thickness.trimmed)) / 2"),
+                    end: Expression(source: "(\(spec.thickness.trimmed)) / 2"),
+                    axis: spec.normal
+                )
             )
         case (.cylinder(let spec), .box):
             let diameter = Expression(source: "2 * (\(spec.radius.trimmed))")
+            let length = Expression(source: "(\(spec.end.trimmed)) - (\(spec.begin.trimmed))")
             let (first, second) = spec.axis.perpendicular
             var box = BoxSpec(width: diameter, height: diameter, depth: diameter)
-            box[spec.axis] = spec.length
+            box[spec.axis] = length
             box[first] = diameter
             box[second] = diameter
             return .box(box)
         case (.cylinder(let spec), .sheet):
             let diameter = Expression(source: "2 * (\(spec.radius.trimmed))")
+            let length = Expression(source: "(\(spec.end.trimmed)) - (\(spec.begin.trimmed))")
             return .sheet(
-                SheetSpec(width: diameter, depth: diameter, thickness: spec.length, normal: spec.axis)
+                SheetSpec(width: diameter, depth: diameter, thickness: length, normal: spec.axis)
             )
         default:
             return .makeDefault(kind)
@@ -327,7 +347,9 @@ extension Primitive: Codable {
 /// A primitive with every expression evaluated.
 public enum ResolvedShape: Hashable, Sendable {
     case box(size: Vec3)
-    case cylinder(radius: Double, length: Double, axis: Axis)
+    /// `begin`/`end` are absolute coordinates along `axis`, in the same frame
+    /// as a body's position — not an extent centred on it.
+    case cylinder(radius: Double, begin: Double, end: Double, axis: Axis)
     case sheet(size: Vec3, normal: Axis)
 
     public var kind: PrimitiveKind {
@@ -346,9 +368,9 @@ public enum ResolvedShape: Hashable, Sendable {
             return size
         case .sheet(let size, _):
             return size
-        case .cylinder(let radius, let length, let axis):
+        case .cylinder(let radius, let begin, let end, let axis):
             var size = Vec3(repeating: radius * 2)
-            size[axis] = length
+            size[axis] = abs(end - begin)
             return size
         }
     }

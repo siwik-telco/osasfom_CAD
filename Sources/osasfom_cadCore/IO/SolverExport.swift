@@ -474,12 +474,12 @@ public enum SolverExportEncoder {
                 axis: nil,
                 isZeroThickness: nil
             )
-        case .cylinder(let radius, let length, let axis):
+        case .cylinder(let radius, let begin, let end, let axis):
             return SolverExport.ShapeRecord(
                 type: "cylinder",
                 size: nil,
                 radiusMeters: unit.toMeters(radius),
-                lengthMeters: unit.toMeters(length),
+                lengthMeters: unit.toMeters(abs(end - begin)),
                 axis: axis.rawValue,
                 isZeroThickness: nil
             )

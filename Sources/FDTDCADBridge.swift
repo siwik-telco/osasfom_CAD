@@ -263,7 +263,8 @@ public final class CADMaterialProvider: MaterialProvider {
             return abs(local.x) <= max(size.x, 0) / 2
                 && abs(local.y) <= max(size.y, 0) / 2
                 && abs(local.z) <= max(size.z, 0) / 2
-        case .cylinder(let radius, let length, let axis):
+        case .cylinder(let radius, let begin, let end, let axis):
+            let length = abs(end - begin)
             switch axis {
             case .x:
                 return abs(local.x) <= length / 2 && (local.y * local.y + local.z * local.z) <= radius * radius

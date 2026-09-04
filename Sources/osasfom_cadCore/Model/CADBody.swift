@@ -123,7 +123,7 @@ public enum BoundsEditability: Hashable, Sendable {
         case .rotated:
             return "This body is rotated, so the box below is its true axis-aligned bounding box and is read-only. Clear the rotation to edit extents directly."
         case .lossyForKind(let kind):
-            return "A \(kind.displayName.lowercased()) has no unique extent inverse, so the box below is read-only. Edit radius, length and axis instead."
+            return "A \(kind.displayName.lowercased()) has no unique extent inverse, so the box below is read-only. Edit radius, begin, end and axis instead."
         }
     }
 }
@@ -219,10 +219,11 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
         case .sheet(let size, _):
             let scaled = size.scaled(by: scale)
             return abs(scaled.x * scaled.y * scaled.z)
-        case .cylinder(let radius, let length, let axis):
+        case .cylinder(let radius, let begin, let end, let axis):
             let (first, second) = axis.perpendicular
             let radiusScale = (abs(scale[first]) + abs(scale[second])) / 2
             let scaledRadius = radius * radiusScale
+            let length = abs(end - begin)
             return Double.pi * scaledRadius * scaledRadius * abs(length * scale[axis])
         }
     }

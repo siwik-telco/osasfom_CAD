@@ -16,7 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct osasfom_cad: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var document = CADDocument.makeStarterDocument()
+    @StateObject private var document = CADDocument(state: CADModelState(name: "Untitled"))
 
     var body: some Scene {
         WindowGroup {

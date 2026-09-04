@@ -1,10 +1,10 @@
 version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
-options: "b331f66338d4a727af6eeeaaea4ea58ebcec0fda3c0877e43cda59bc92181e74"
-build_start_time: [1788553326, 648230000]
-build_end_time: [1788553350, 722098000]
+options: "7f716763ce8f4bac2f35bcd1ad3049e1440ba0c731ed6fe524e07d9208915263"
+build_start_time: [1788555007, 151925000]
+build_end_time: [1788555027, 317559000]
 inputs:
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Diagnostics/Diagnostic.swift": [1786822354, 423243841]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Document/CADDocument.swift": [1788550953, 302381065]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Document/CADDocument.swift": [1788554794, 184615935]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Document/UndoStack.swift": [1786822978, 611632224]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/Expression.swift": [1786822440, 900826440]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionAggregates.swift": [1786822454, 367163360]
@@ -18,6 +18,7 @@ inputs:
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Vec3.swift": [1786822311, 430362573]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/LegacyProjectImporter.swift": [1788541119, 234774623]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/ProjectFile.swift": [1786822881, 68015104]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/STLExporter.swift": [1788554776, 430633280]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift": [1788541111, 462856655]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/ArrayOffsets.swift": [1786823283, 595433940]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADBody.swift": [1788541089, 829674078]

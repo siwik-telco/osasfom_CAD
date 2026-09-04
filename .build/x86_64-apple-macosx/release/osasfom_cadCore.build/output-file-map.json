@@ -79,6 +79,11 @@
     "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile~partial.swiftmodule",
     "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile.swiftdeps"
   },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/STLExporter.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/STLExporter.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/STLExporter~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/STLExporter.swiftdeps"
+  },
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift": {
     "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport.swift.o",
     "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport~partial.swiftmodule",

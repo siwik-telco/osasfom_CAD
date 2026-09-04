@@ -113,7 +113,6 @@
         "-swift-version",
         "5",
         "-O",
-        "-enable-testing",
         "-g",
         "-j16",
         "-DSWIFT_PACKAGE",
@@ -287,6 +286,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/STLExporter.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift"
         },
         {
@@ -357,6 +360,7 @@
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Vec3.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/LegacyProjectImporter.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile.swift.o",
+        "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/STLExporter.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/ArrayOffsets.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADBody.swift.o",
@@ -377,7 +381,6 @@
         "-swift-version",
         "5",
         "-O",
-        "-enable-testing",
         "-g",
         "-j16",
         "-DSWIFT_PACKAGE",
@@ -472,6 +475,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/STLExporter.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport.swift.o"
         },
         {
@@ -543,6 +550,7 @@
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Vec3.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/LegacyProjectImporter.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/ProjectFile.swift",
+        "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/STLExporter.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/ArrayOffsets.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADBody.swift",
@@ -586,6 +594,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/STLExporterTests.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/SerializationTests.swift"
         },
         {
@@ -606,6 +618,7 @@
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/GeometryTests.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/ModelResolverTests.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/RotationConventionTests.swift.o",
+        "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/STLExporterTests.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/SerializationTests.swift.o",
         "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/VariableResolverTests.swift.o"
       ],
@@ -669,6 +682,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/STLExporterTests.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCoreTests.build/SerializationTests.swift.o"
         },
         {
@@ -686,6 +703,7 @@
         "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/GeometryTests.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/ModelResolverTests.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/RotationConventionTests.swift",
+        "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/STLExporterTests.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/SerializationTests.swift",
         "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/VariableResolverTests.swift"
       ],
@@ -727,7 +745,6 @@
         "-swift-version",
         "5",
         "-O",
-        "-enable-testing",
         "-g",
         "-j16",
         "-DSWIFT_PACKAGE",
@@ -815,7 +832,6 @@
         "-swift-version",
         "5",
         "-O",
-        "-enable-testing",
         "-g",
         "-j16",
         "-DSWIFT_PACKAGE",
@@ -999,7 +1015,6 @@
       "-swift-version",
       "5",
       "-O",
-      "-enable-testing",
       "-g",
       "-j16",
       "-DSWIFT_PACKAGE",
@@ -1058,6 +1073,7 @@
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Vec3.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/LegacyProjectImporter.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/ProjectFile.swift",
+      "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/STLExporter.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/ArrayOffsets.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADBody.swift",
@@ -1078,7 +1094,6 @@
       "-swift-version",
       "5",
       "-O",
-      "-enable-testing",
       "-g",
       "-j16",
       "-DSWIFT_PACKAGE",
@@ -1127,6 +1142,7 @@
       "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/GeometryTests.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/ModelResolverTests.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/RotationConventionTests.swift",
+      "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/STLExporterTests.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/SerializationTests.swift",
       "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/VariableResolverTests.swift",
       "-I",
@@ -1189,7 +1205,6 @@
       "-swift-version",
       "5",
       "-O",
-      "-enable-testing",
       "-g",
       "-j16",
       "-DSWIFT_PACKAGE",
@@ -1242,7 +1257,6 @@
       "-swift-version",
       "5",
       "-O",
-      "-enable-testing",
       "-g",
       "-j16",
       "-DSWIFT_PACKAGE",

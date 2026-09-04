@@ -1,7 +1,7 @@
 version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
-options: "4b97cd269f5db795795a502851d5ae2047b0743b6d5ba8d30c97b01eab65fd17"
-build_start_time: [1788553350, 847688000]
-build_end_time: [1788553398, 256550000]
+options: "6e7f0abc37ebb8203bedf0595d7a124d791b5d4775561b26311d1a633c865ad8"
+build_start_time: [1788555027, 440358000]
+build_end_time: [1788555068, 624148000]
 inputs:
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadSolver/FDTDCADBridge.swift": [1788553137, 318677061]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadSolver/FDTDSolver.swift": [1788544311, 442701174]

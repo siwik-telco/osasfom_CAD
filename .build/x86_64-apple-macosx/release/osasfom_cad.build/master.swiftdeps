@@ -1,18 +1,18 @@
 version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
-options: "d6c0d18b367ab909f766ac65aa6b53ffb47b3f70aa78cba527004c7a0b11aa6f"
-build_start_time: [1788553398, 364816000]
-build_end_time: [1788553409, 234060000]
+options: "4e383e8720b21d4b842d116cbbb9e04536762889cb515ac7be5b7bf327547e15"
+build_start_time: [1788555068, 724583000]
+build_end_time: [1788555077, 47625000]
 inputs:
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Support/DocumentBindings.swift": [1786824256, 49106432]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Support/ProjectPanels.swift": [1786823942, 234669607]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Support/ProjectPanels.swift": [1788554907, 132096641]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Support/TypeDisambiguation.swift": [1786824264, 187929026]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/BodyInspectorView.swift": [1788541155, 12261833]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/ExpressionField.swift": [1786823367, 266111382]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/MainView.swift": [1788551107, 816798937]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/MainView.swift": [1788554937, 912646055]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/MaterialsInspectorView.swift": [1786823931, 574002233]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/ModelSidebarView.swift": [1786824277, 126456284]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/SceneViewport.swift": [1788550984, 709022033]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/SimulationInspectorView.swift": [1788551071, 590239852]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/SimulationRunnerView.swift": [1788553217, 919531295]
   "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/Views/VariablesPanelView.swift": [1786823495, 641347585]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/osasfom_cad.swift": [1788541610, 991673437]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cad/osasfom_cad.swift": [1788554913, 300181350]

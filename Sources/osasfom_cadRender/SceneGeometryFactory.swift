@@ -150,6 +150,34 @@ public enum SceneGeometryFactory {
         return SCNNode(geometry: geometry)
     }
 
+    /// A small billboarded text label, e.g. for naming the X/Y/Z axes in the
+    /// viewport so a non-technical user can tell them apart at a glance.
+    public static func makeLabelNode(text: String, color: NSColor, size: CGFloat = 6) -> SCNNode {
+        let textGeometry = SCNText(string: text, extrusionDepth: 0)
+        textGeometry.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+        textGeometry.flatness = 0.2
+        let material = SCNMaterial()
+        material.diffuse.contents = color
+        material.emission.contents = color
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        textGeometry.materials = [material]
+
+        let node = SCNNode(geometry: textGeometry)
+        let (boundsMin, boundsMax) = textGeometry.boundingBox
+        let scale = size / Swift.max(CGFloat(boundsMax.x - boundsMin.x), 1)
+        node.scale = SCNVector3(scale, scale, scale)
+        // Centre the glyph on its node origin instead of SceneKit's default
+        // bottom-left, so the label sits squarely at the tip of an axis.
+        node.pivot = SCNMatrix4MakeTranslation(
+            (boundsMin.x + boundsMax.x) / 2,
+            (boundsMin.y + boundsMax.y) / 2,
+            (boundsMin.z + boundsMax.z) / 2
+        )
+        node.constraints = [SCNBillboardConstraint()]
+        return node
+    }
+
     public static func vector(_ value: Vec3) -> SCNVector3 {
         SCNVector3(CGFloat(value.x), CGFloat(value.y), CGFloat(value.z))
     }

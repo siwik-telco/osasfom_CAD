@@ -39,12 +39,23 @@ osasfom_cad
 │   │   ├── IO/              # project file, legacy import, solver export
 │   │   └── Document/        # document + snapshot undo
 │   ├── osasfom_cadRender    # SceneKit scene controller
-│   └── osasfom_cad          # SwiftUI app
+│   ├── osasfom_cad          # SwiftUI app
+│   ├── FDTDSolver.swift     # in-progress Yee-grid FDTD engine (openEMS port, GPLv3)
+│   └── FDTDCADBridge.swift  # in-progress bridge: ResolvedModel -> grid -> engine
 └── Tests/osasfom_cadCoreTests
 ```
 
 Core imports neither AppKit nor SceneKit, so it can be driven from a
 command-line mesher or solver harness and is fully unit-testable.
+
+`FDTDSolver.swift` and `FDTDCADBridge.swift` are a working skeleton of the
+solver itself — a Swift port of openEMS's `Engine`/`Operator` core, and a
+bridge that meshes a `ResolvedModel` into Yee grid lines and drives the
+engine to extract S11 from a lumped port. They are not yet wired into
+`Package.swift` as a target (no product depends on them, and they are
+untested), so they build with the rest of the app only if added to a target
+manually. Being a derivative of GPLv3-licensed openEMS code, this part of the
+project is GPLv3 (see `LICENSE`).
 
 ## Modelling
 
@@ -75,7 +86,12 @@ every machine regardless of locale.
 ### Primitives
 
 - **Box** — width (X), height (Y), depth (Z)
-- **Cylinder** — radius, length, and a selectable axis
+- **Cylinder** — radius, a selectable axis, and **begin/end**: the absolute
+  coordinates of its two terminals along that axis, in the same frame as a
+  body's position. This lets a monopole start exactly at a ground plane
+  instead of always being centred on it — the body's Position field on that
+  one axis is unused for a cylinder; the other two axes still position it as
+  usual.
 - **Sheet** — width, depth, thickness and a selectable normal. **Thickness may
   be zero**, giving an infinitely thin surface, which is the natural way to
   model a PEC patch or ground plane.
@@ -136,11 +152,15 @@ automatically; its name-based variable bindings become real expressions.
   not one per keystroke.
 - **Extent editing is offered only where it is well defined.** For a rotated
   body the box shown is its true axis-aligned bounding box, read-only; a
-  cylinder has no unique inverse, so you edit radius, length and axis instead.
-  Editing extents on a parametric body replaces those expressions with numbers,
-  and says so first.
+  cylinder has no unique inverse, so you edit radius, begin, end and axis
+  instead. Editing extents on a parametric body replaces those expressions
+  with numbers, and says so first.
 - **Changing the length unit reinterprets numbers, it does not rescale them** —
   expressions like `patch_w / 2` have no meaningful rescale.
+- **The X/Y/Z axes are labelled in the 3D view** (red/green/blue, matching the
+  axis pickers), so it is never a guess which is which.
+- **New documents start empty** — no starter geometry or preset variables are
+  loaded on launch.
 
 ## Building
 
@@ -157,5 +177,8 @@ Requires macOS 13+ and Swift 5.9.
 ## Not yet implemented
 
 Sketch-based modelling, extrude, boolean operations, face and edge selection,
-snapping, and the mesher and solver themselves. The export schema is the
-interface those will be built against.
+and snapping. The export schema is the interface the mesher and solver are
+built against; a first skeleton of the solver itself exists
+(`FDTDSolver.swift`, `FDTDCADBridge.swift`) but is not yet wired into the
+package as a buildable, tested target, and its port-physics and PML are
+still placeholders.

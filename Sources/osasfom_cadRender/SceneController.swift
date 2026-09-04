@@ -425,6 +425,21 @@ public final class SceneController {
                 color: SceneStyle.axisZ
             )
         )
+
+        // Labels so a viewer can tell the axes apart by name, not just colour.
+        let labelOffset = length * 1.06
+        let xLabel = SceneGeometryFactory.makeLabelNode(text: "X", color: SceneStyle.axisX)
+        xLabel.position = SceneGeometryFactory.vector(Vec3(x: labelOffset, y: 0, z: 0))
+        node.addChildNode(xLabel)
+
+        let yLabel = SceneGeometryFactory.makeLabelNode(text: "Y", color: SceneStyle.axisY)
+        yLabel.position = SceneGeometryFactory.vector(Vec3(x: 0, y: labelOffset, z: 0))
+        node.addChildNode(yLabel)
+
+        let zLabel = SceneGeometryFactory.makeLabelNode(text: "Z", color: SceneStyle.axisZ)
+        zLabel.position = SceneGeometryFactory.vector(Vec3(x: 0, y: 0, z: labelOffset))
+        node.addChildNode(zLabel)
+
         return node
     }
 

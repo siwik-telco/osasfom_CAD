@@ -1,0 +1,147 @@
+{
+  "": {
+    "dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/osasfom_cadCore.d",
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/osasfom_cadCore.o",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/master.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Diagnostics/Diagnostic.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Diagnostics/Diagnostic.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Diagnostics/Diagnostic~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Diagnostics/Diagnostic.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Document/CADDocument.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/CADDocument.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/CADDocument~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/CADDocument.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Document/UndoStack.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/UndoStack.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/UndoStack~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Document/UndoStack.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/Expression.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/Expression.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/Expression~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/Expression.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionAggregates.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionAggregates.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionAggregates~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionAggregates.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionBuiltins.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionBuiltins.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionBuiltins~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionBuiltins.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionError.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionError.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionError~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionError.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionLexer.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionLexer.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionLexer~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionLexer.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Expressions/ExpressionNode.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionNode.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionNode~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Expressions/ExpressionNode.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Axis.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Axis.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Axis~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Axis.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/BodyBounds.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/BodyBounds.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/BodyBounds~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/BodyBounds.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Matrix3.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Matrix3.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Matrix3~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Matrix3.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Geometry/Vec3.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Vec3.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Vec3~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Geometry/Vec3.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/LegacyProjectImporter.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/LegacyProjectImporter.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/LegacyProjectImporter~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/LegacyProjectImporter.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/ProjectFile.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/ProjectFile.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/IO/SolverExport.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/IO/SolverExport.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/ArrayOffsets.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/ArrayOffsets.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/ArrayOffsets~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/ArrayOffsets.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADBody.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADBody.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADBody~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADBody.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADModelState.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADModelState.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADModelState~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADModelState.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/CADVariable.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADVariable.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADVariable~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/CADVariable.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/LengthUnit.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/LengthUnit.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/LengthUnit~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/LengthUnit.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/MaterialDefinition.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/MaterialDefinition.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/MaterialDefinition~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/MaterialDefinition.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Model/Primitive.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/Primitive.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/Primitive~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Model/Primitive.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Resolve/ModelResolver.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ModelResolver.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ModelResolver~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ModelResolver.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Resolve/ResolvedModel.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ResolvedModel.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ResolvedModel~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Resolve/ResolvedModel.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Simulation/LumpedPort.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/LumpedPort.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/LumpedPort~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/LumpedPort.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Simulation/SimulationCoding.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationCoding.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationCoding~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationCoding.swiftdeps"
+  },
+  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadCore/Simulation/SimulationSetup.swift": {
+    "object": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationSetup.swift.o",
+    "swiftmodule": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationSetup~partial.swiftmodule",
+    "swift-dependencies": "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/Simulation/SimulationSetup.swiftdeps"
+  }
+}

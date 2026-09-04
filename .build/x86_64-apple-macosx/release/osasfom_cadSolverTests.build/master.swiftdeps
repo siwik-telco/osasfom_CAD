@@ -1,0 +1,8 @@
+version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
+options: "fb6fa801bc6a18bd7bb34bce6bee4010fdabc3be2d3a5109a615d1ab81b74f25"
+build_start_time: [1788553398, 363706000]
+build_end_time: [1788553399, 772822000]
+inputs:
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadSolverTests/DipoleReturnLossTests.swift": [1788544761, 493676264]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadSolverTests/NoConductorNearPortTests.swift": [1788550008, 311516080]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadSolverTests/StopSimulationTests.swift": [1788553239, 608932035]

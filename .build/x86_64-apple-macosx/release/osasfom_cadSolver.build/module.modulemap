@@ -1,0 +1,4 @@
+module osasfom_cadSolver {
+    header "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadSolver.build/osasfom_cadSolver-Swift.h"
+    requires objc
+}

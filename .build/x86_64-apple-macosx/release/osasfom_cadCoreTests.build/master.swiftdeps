@@ -1,0 +1,12 @@
+version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
+options: "1f8dffd3a91af958764eae0e3f05d2d42e35ea5a0bb9a772f9ce746bd7a16bbc"
+build_start_time: [1788553350, 848312000]
+build_end_time: [1788553355, 772087000]
+inputs:
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/DocumentTests.swift": [1788541673, 470041470]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/ExpressionTests.swift": [1786824314, 638248490]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/GeometryTests.swift": [1788541210, 25272464]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/ModelResolverTests.swift": [1788541228, 655720682]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/RotationConventionTests.swift": [1786824938, 436732968]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/SerializationTests.swift": [1788541256, 659337843]
+  "/Users/barteksiwik/Desktop/osasfom_cad/Tests/osasfom_cadCoreTests/VariableResolverTests.swift": [1786824330, 852840033]

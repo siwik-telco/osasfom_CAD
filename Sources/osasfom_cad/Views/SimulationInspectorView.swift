@@ -534,35 +534,44 @@ private struct PortEditor: View {
                     }
                 }
 
-                Picker(
-                    "Direction",
-                    selection: document.portBinding(
-                        portID,
-                        \.direction,
-                        actionName: "Change SimulationPort Direction",
-                        field: "direction"
-                    )
-                ) {
-                    ForEach(Axis.allCases) { axis in
-                        Text(axis.displayName).tag(axis)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                BoundsExpressionEditor(
-                    bounds: Binding(
-                        get: { port.region },
-                        set: { newValue in
-                            document.updatePort(
-                                portID,
-                                actionName: "Edit SimulationPort",
-                                coalescingKey: "port.\(portID.uuidString).region"
-                            ) { $0.region = newValue }
+                if port.kind == .waveguide {
+                    Picker(
+                        "Direction",
+                        selection: document.portBinding(
+                            portID,
+                            \.direction,
+                            actionName: "Change SimulationPort Direction",
+                            field: "direction"
+                        )
+                    ) {
+                        ForEach(Axis.allCases) { axis in
+                            Text(axis.displayName).tag(axis)
                         }
-                    ),
-                    variables: document.resolved.variables.values,
-                    unitSymbol: document.state.lengthUnit.symbol
-                )
+                    }
+                    .pickerStyle(.segmented)
+
+                    BoundsExpressionEditor(
+                        bounds: Binding(
+                            get: { port.region },
+                            set: { newValue in
+                                document.updatePort(
+                                    portID,
+                                    actionName: "Edit SimulationPort",
+                                    coalescingKey: "port.\(portID.uuidString).region"
+                                ) { $0.region = newValue }
+                            }
+                        ),
+                        variables: document.resolved.variables.values,
+                        unitSymbol: document.state.lengthUnit.symbol
+                    )
+                } else {
+                    // A lumped port's gap is its begin/end terminals, not
+                    // `region` — the resolver never reads `region` for a
+                    // lumped port, so editing it here would silently do
+                    // nothing to the actual simulated geometry.
+                    PortTerminalEditor(document: document, portID: portID, terminal: .begin, label: "Begin")
+                    PortTerminalEditor(document: document, portID: portID, terminal: .end, label: "End")
+                }
 
                 HStack {
                     Text("Impedance").foregroundStyle(.secondary)
@@ -596,6 +605,60 @@ private struct PortEditor: View {
                     DiagnosticRow(diagnostic: diagnostic)
                 }
             }
+        }
+    }
+}
+
+/// One terminal (begin or end) of a lumped port: X/Y/Z expression fields plus
+/// a "Pick" button that arms click-to-place in the 3D viewport — click any
+/// body's face there and this terminal snaps to that face's center.
+private struct PortTerminalEditor: View {
+    @ObservedObject var document: CADDocument
+    let portID: UUID
+    let terminal: FacePickRequest.Terminal
+    let label: String
+
+    private var keyPath: WritableKeyPath<SimulationPort, Vector3Expression> {
+        terminal == .begin ? \.begin : \.end
+    }
+
+    private var isArmed: Bool {
+        document.facePickRequest == FacePickRequest(portID: portID, terminal: terminal)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label).foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    document.facePickRequest = isArmed ? nil : FacePickRequest(portID: portID, terminal: terminal)
+                } label: {
+                    Label(isArmed ? "Click a Face…" : "Pick", systemImage: "hand.point.up.left")
+                }
+                .buttonStyle(.bordered)
+                .tint(isArmed ? .accentColor : nil)
+                .controlSize(.small)
+            }
+
+            ExpressionRow(
+                label: "X",
+                expression: document.portBinding(portID, (keyPath.appending(path: \.x)), actionName: "Edit Port Terminal", field: "\(terminal).x"),
+                variables: document.resolved.variables.values,
+                unitSymbol: document.state.lengthUnit.symbol
+            )
+            ExpressionRow(
+                label: "Y",
+                expression: document.portBinding(portID, (keyPath.appending(path: \.y)), actionName: "Edit Port Terminal", field: "\(terminal).y"),
+                variables: document.resolved.variables.values,
+                unitSymbol: document.state.lengthUnit.symbol
+            )
+            ExpressionRow(
+                label: "Z",
+                expression: document.portBinding(portID, (keyPath.appending(path: \.z)), actionName: "Edit Port Terminal", field: "\(terminal).z"),
+                variables: document.resolved.variables.values,
+                unitSymbol: document.state.lengthUnit.symbol
+            )
         }
     }
 }

@@ -30,6 +30,7 @@
 //
 
 import Foundation
+import osasfom_cadCore
 
 // MARK: - 1. Mesher: ResolvedModel -> Operator.discLines
 
@@ -61,28 +62,28 @@ public enum GridMesher {
 
         func axisLines(_ axis: Axis) -> [Double] {
             var fixed = Set<Double>()
-            fixed.insert(domain.minimum(on: axis))
-            fixed.insert(domain.maximum(on: axis))
+            fixed.insert(domain.minimum[axis])
+            fixed.insert(domain.maximum[axis])
 
             if setup.mesh.snapToBodyEdges {
                 for body in resolved.bodies where body.isVisible {
-                    fixed.insert(body.axisAlignedBounds.minimum(on: axis))
-                    fixed.insert(body.axisAlignedBounds.maximum(on: axis))
+                    fixed.insert(body.axisAlignedBounds.minimum[axis])
+                    fixed.insert(body.axisAlignedBounds.maximum[axis])
                 }
             }
             for port in resolved.simulation.ports {
-                fixed.insert(port.bounds.minimum(on: axis))
-                fixed.insert(port.bounds.maximum(on: axis))
+                fixed.insert(port.bounds.minimum[axis])
+                fixed.insert(port.bounds.maximum[axis])
             }
             for refinement in plan.refinements {
-                fixed.insert(refinement.bounds.minimum(on: axis))
-                fixed.insert(refinement.bounds.maximum(on: axis))
+                fixed.insert(refinement.bounds.minimum[axis])
+                fixed.insert(refinement.bounds.maximum[axis])
             }
             for value in plan.fixedLines(on: axis) {
                 fixed.insert(value)
             }
 
-            let sortedFixed = fixed.sorted().filter { $0 >= domain.minimum(on: axis) && $0 <= domain.maximum(on: axis) }
+            let sortedFixed = fixed.sorted().filter { $0 >= domain.minimum[axis] && $0 <= domain.maximum[axis] }
 
             // Docelowy rozmiar komórki w danym punkcie: bazowy, chyba że
             // punkt leży wewnątrz regionu refinement - wtedy najmniejszy
@@ -90,7 +91,7 @@ public enum GridMesher {
             func targetCellSize(at x: Double) -> Double {
                 var target = baseCell
                 for refinement in plan.refinements {
-                    if x >= refinement.bounds.minimum(on: axis) && x <= refinement.bounds.maximum(on: axis) {
+                    if x >= refinement.bounds.minimum[axis] && x <= refinement.bounds.maximum[axis] {
                         target = min(target, refinement.targetCellSize)
                     }
                 }
@@ -106,7 +107,7 @@ public enum GridMesher {
             if let last = sortedFixed.last {
                 lines.append(last)
             } else {
-                lines = [domain.minimum(on: axis), domain.maximum(on: axis)]
+                lines = [domain.minimum[axis], domain.maximum[axis]]
             }
 
             // De-duplikacja i minimalny odstęp, żeby uniknąć zerowych komórek.
@@ -333,12 +334,18 @@ public final class EngineHandle {
     public init() {}
 }
 
-/// Prosty port skupiony: miękkie źródło napięciowe (dla portu wzbudzanego)
-/// + rejestracja V(t)/I(t) na potrzeby S-parametrów. To NIE jest pełny
-/// port rezystancyjny openEMS (brak modyfikacji lokalnej G/R w operatorze) -
-/// wystarcza do pierwszych uruchomień i porównań jakościowych; do S11
-/// ilościowo zgodnego z openEMS trzeba dodatkowo wstrzyknąć rezystor przez
-/// CADMaterialProvider (patrz komentarz w SimulationRunner).
+/// A resistively-terminated lumped port: `Operator.addLumpedResistor` stamps
+/// the port's reference impedance directly onto this edge's conductance
+/// (so the edge is no longer a lossless material cell but an actual R-loaded
+/// node), and this extension adds the Thevenin source voltage on top each
+/// step and records V(t)/I(t) for the S-parameter DFT. This is the same
+/// two-part scheme openEMS uses for a lumped-port excitation (soft voltage
+/// injection at a resistively-stamped edge), not a full openEMS
+/// `Operator_Ext_LumpedElement` port — port current is read from the
+/// adjacent H-field (`Engine.getCurr`) as a proxy for the true Ampere's-law
+/// loop current, which is exact only when the gap spans exactly one Yee
+/// edge (true for the meshes `GridMesher` produces, since it always inserts
+/// a fixed line at both port terminals).
 public final class LumpedPortExtension: EngineExtension {
     public let priority = 100
     public let extensionName: String
@@ -394,7 +401,14 @@ public final class LumpedPortExtension: EngineExtension {
             engine.setVolt(directionIndex, gridPos.0, gridPos.1, gridPos.2, existing + injected)
         }
         let v = engine.getVolt(directionIndex, gridPos.0, gridPos.1, gridPos.2)
-        let i = engine.getCurr(directionIndex, gridPos.0, gridPos.1, gridPos.2)
+        // curlH's +n reference (Ampère's law, matching how curl(H) drives
+        // +dE/dt in the update this edge uses) is the current flowing *out*
+        // of the port into the rest of the circuit loop, i.e. opposite to
+        // the a/b-wave convention's "current into the port from the
+        // source". Confirmed empirically too: without this flip, |S11|
+        // comes out > 1 everywhere (impossible for this passive one-port) —
+        // exactly the mirrored curve 1/S11 produces.
+        let i = -engine.curlH(direction: directionIndex, pos: gridPos)
         timeSeconds.append(t)
         voltage.append(v)
         current.append(i)
@@ -438,37 +452,143 @@ public enum PortSpectrum {
     }
 }
 
-// MARK: - 6. Orchestrator: CADDocument -> Engine -> wyniki
+// MARK: - 6. Orchestrator: CADDocument -> Engine -> results
+
+/// One point of a return-loss sweep.
+public struct S11Point: Hashable, Sendable {
+    public let hertz: Double
+    public let decibels: Double
+}
+
+/// A completed run, with enough of the model's state at the time to make
+/// sense of it later — in particular the variable values that produced it,
+/// so a later change to those variables is visible as a diff against any
+/// past run.
+public struct RunRecord: Identifiable, Sendable {
+    public let id: Int
+    public let timestamp: Date
+    /// Variable name -> resolved value, at the moment this run started.
+    public let variableSnapshot: [String: Double]
+    public let sweptFrequencyRange: FrequencyRange
+    public let maximumTimeSteps: Int
+    public let wasStoppedEarly: Bool
+    public let gridSize: (Int, Int, Int)
+    public let s11Spectrum: [S11Point]
+    public let s11DbAtCenter: Double?
+}
 
 @MainActor
 public final class SimulationRunner: ObservableObject {
     public enum RunnerError: Error, LocalizedError {
         case noDomain
         case modelHasErrors(Int)
+        case noExcitedLumpedPort
+        case noConductorNearExcitedPort(String)
 
         public var errorDescription: String? {
             switch self {
-            case .noDomain: return "Domena obliczeniowa nie jest zdefiniowana."
-            case .modelHasErrors(let n): return "Model ma \(n) błąd(ów) - popraw je przed uruchomieniem symulacji."
+            case .noDomain: return "The computational domain is not defined."
+            case .modelHasErrors(let n): return "The model has \(n) error(s) — fix them before running the simulation."
+            case .noExcitedLumpedPort: return "No excited lumped port; there is nothing to compute a return loss from."
+            case .noConductorNearExcitedPort(let name):
+                return "Port “\(name)” isn't touching a conductor on either terminal. Its resistor would sit alone in free space, perfectly matched to its own reference impedance — the result would be a flat, meaningless S11 near 0 dB. Assign a conductive material (e.g. PEC) to the body the port should feed, or move the port terminals so they meet it."
             }
         }
     }
 
+    /// How many points to sample across the excited frequency range for the
+    /// return-loss sweep. A plain (non-FFT) DFT is used, so this is O(N) DFTs
+    /// over the recorded time series — fine for a few hundred points.
+    public var spectrumPointCount = 121
+
     @Published public private(set) var isRunning = false
     @Published public private(set) var progress: Double = 0
     @Published public private(set) var s11DbAtCenter: Double?
+    @Published public private(set) var s11Spectrum: [S11Point] = []
     @Published public private(set) var gridSize: (Int, Int, Int) = (0, 0, 0)
+    /// True if the spectrum currently shown came from a run stopped early
+    /// rather than one that ran its full step count.
+    @Published public private(set) var wasStoppedEarly = false
+    /// The frequency range actually simulated (the excitation's effective
+    /// bandwidth). `s11Spectrum`'s displayed range can be narrowed within
+    /// this via `setPlotRange`, but not meaningfully widened beyond it.
+    @Published public private(set) var sweptFrequencyRange: FrequencyRange?
+    /// The range `s11Spectrum` currently covers — equal to
+    /// `sweptFrequencyRange` until `setPlotRange` narrows it.
+    @Published public private(set) var plotRange: FrequencyRange?
+    @Published public private(set) var history: [RunRecord] = []
 
     private var op: Operator?
     private var engine: Engine?
     private var ports: [LumpedPortExtension] = []
+    private var currentTask: Task<Void, Never>?
+    private var nextRunID = 1
+    private var lastExcitedPortName: String?
+    private var lastImpedanceOhm: Double = 50
 
     public init() {}
 
-    public func run(document: CADDocument) throws {
+    /// Recomputes `s11Spectrum` over `[minimumHertz, maximumHertz]` from the
+    /// current run's already-recorded V(t)/I(t) — no re-simulation needed,
+    /// since the DFT can be evaluated at any frequency after the fact. Lets
+    /// the plot be zoomed into a sub-band for a closer look at a resonance.
+    /// Recomputes the plotted spectrum over `[minimumHertz, maximumHertz]`,
+    /// **clamped to `sweptFrequencyRange`** — the band that was actually
+    /// excited and simulated. A DFT is mathematically well-defined at any
+    /// frequency, so without this clamp a stray or stale value here would
+    /// silently plot frequencies that were never simulated: numbers with no
+    /// real excitation energy behind them, indistinguishable on the chart
+    /// from a real result. `plotRange` (published) always reflects what was
+    /// actually applied, so the UI can resync its fields to the clamped
+    /// value rather than keep showing an invalid request.
+    public func setPlotRange(minimumHertz: Double, maximumHertz: Double) {
+        guard maximumHertz > minimumHertz, minimumHertz > 0 else { return }
+        guard let full = sweptFrequencyRange else { return }
+        guard let name = lastExcitedPortName,
+              let excited = ports.first(where: { $0.extensionName == "Port_\(name)" }),
+              excited.timeSeconds.count > 1 else { return }
+
+        let clampedMin = min(max(minimumHertz, full.minimumHertz), full.maximumHertz)
+        let clampedMax = max(min(maximumHertz, full.maximumHertz), full.minimumHertz)
+        guard clampedMax > clampedMin else { return }
+
+        let count = max(spectrumPointCount, 2)
+        var spectrum: [S11Point] = []
+        spectrum.reserveCapacity(count)
+        for i in 0..<count {
+            let f = clampedMin + (clampedMax - clampedMin) * Double(i) / Double(count - 1)
+            spectrum.append(S11Point(hertz: f, decibels: PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f)))
+        }
+        s11Spectrum = spectrum
+        s11DbAtCenter = PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: (clampedMin + clampedMax) / 2)
+        plotRange = FrequencyRange(minimumHertz: clampedMin, maximumHertz: clampedMax)
+    }
+
+    /// Undoes `setPlotRange`, back to the full range that was simulated.
+    public func resetPlotRangeToFullSweep() {
+        guard let full = sweptFrequencyRange else { return }
+        setPlotRange(minimumHertz: full.minimumHertz, maximumHertz: full.maximumHertz)
+    }
+
+    /// Cancels the run in progress, if any. The time series recorded so far
+    /// is still used to compute a (less converged, but often still useful)
+    /// S11 spectrum, rather than discarding the work outright.
+    public func stop() {
+        currentTask?.cancel()
+    }
+
+    /// Returns the background task driving the run, mainly so tests (and any
+    /// caller that wants to know when a run finishes) can `await` it — the UI
+    /// is free to ignore the return value and just watch the `@Published`
+    /// properties instead.
+    @discardableResult
+    public func run(document: CADDocument) throws -> Task<Void, Never> {
         let resolved = document.resolved
         guard resolved.errorCount == 0 else { throw RunnerError.modelHasErrors(resolved.errorCount) }
         guard resolved.simulation.domain != nil else { throw RunnerError.noDomain }
+        guard resolved.simulation.ports.contains(where: { $0.kind == .lumped && $0.isExcited }) else {
+            throw RunnerError.noExcitedLumpedPort
+        }
 
         let setup = document.state.simulation
         let unit = document.state.lengthUnit
@@ -477,40 +597,70 @@ public final class SimulationRunner: ObservableObject {
             throw RunnerError.noDomain
         }
 
+        let materialProvider = CADMaterialProvider(bodies: resolved.bodies, materials: document.state.materials, unit: unit)
+
+        // Catch the degenerate "port feeding nothing" setup before spending
+        // minutes on a run: if there's no conductor for the resistor to load
+        // into, the local edge is a resistor perfectly matched to its own
+        // reference impedance and S11 is guaranteed to sit near 0 dB
+        // everywhere, regardless of frequency — a result that looks like a
+        // solver bug but is actually just an unconnected port.
+        for port in resolved.simulation.ports where port.kind == .lumped && port.isExcited {
+            guard hasConductorNearPort(port, materialProvider: materialProvider, unit: unit) else {
+                throw RunnerError.noConductorNearExcitedPort(port.name)
+            }
+        }
+
         let op = Operator()
-        op.setupGrid(discLines: lines.metersLines, gridDeltaUnit: 1.0) // linie już w metrach
-        op.materialProvider = CADMaterialProvider(bodies: resolved.bodies, materials: document.state.materials, unit: unit)
+        op.setupGrid(discLines: lines.metersLines, gridDeltaUnit: 1.0) // lines are already in meters
+        op.materialProvider = materialProvider
+        op.absorbingBoundary = makeAbsorbingBoundary(boundaries: setup.boundaries, lines: lines.metersLines)
 
         let handle = EngineHandle()
         var portExtensions: [LumpedPortExtension] = []
         var factories: [() -> EngineExtension] = []
 
-        for port in resolved.simulation.ports {
-            let center = Vec3(
-                x: (port.bounds.minimum(on: .x) + port.bounds.maximum(on: .x)) / 2,
-                y: (port.bounds.minimum(on: .y) + port.bounds.maximum(on: .y)) / 2,
-                z: (port.bounds.minimum(on: .z) + port.bounds.maximum(on: .z)) / 2
-            )
-            let centerMeters = (unit.toMeters(center.x), unit.toMeters(center.y), unit.toMeters(center.z))
-            let gridPos = (
-                nearestIndex(lines.metersLines[0], centerMeters.0),
-                nearestIndex(lines.metersLines[1], centerMeters.1),
-                nearestIndex(lines.metersLines[2], centerMeters.2)
-            )
-            let directionIndex = port.direction == .x ? 0 : (port.direction == .y ? 1 : 2)
-            let gapMeters = unit.toMeters(port.gapLength)
+        for port in resolved.simulation.ports where port.kind == .lumped {
+            let directionIndex = axisIndex(port.direction)
+
+            // The port's own axis: the gap's *start* terminal, not its
+            // center — GridMesher always inserts a fixed line at both
+            // port.bounds.minimum/maximum, so this lands exactly on a grid
+            // line and the gap spans exactly one Yee edge in that direction.
+            // The two transverse axes just need the nearest node to center.
+            var gridPos = (0, 0, 0)
+            for axis in Axis.allCases {
+                let i = axisIndex(axis)
+                let valueMeters: Double
+                if axis == port.direction {
+                    valueMeters = unit.toMeters(port.bounds.minimum[axis])
+                } else {
+                    let center = (port.bounds.minimum[axis] + port.bounds.maximum[axis]) / 2
+                    valueMeters = unit.toMeters(center)
+                }
+                let index = nearestIndex(lines.metersLines[i], valueMeters)
+                switch i {
+                case 0: gridPos.0 = index
+                case 1: gridPos.1 = index
+                default: gridPos.2 = index
+                }
+            }
+
+            // Stamp the port's reference impedance directly onto this edge
+            // so it is a real R-loaded node, not just a lossless soft source.
+            op.addLumpedResistor(direction: directionIndex, pos: gridPos, ohms: port.impedanceOhm)
 
             let ext = LumpedPortExtension(
                 name: "Port_\(port.name)",
                 handle: handle,
                 directionIndex: directionIndex,
                 gridPos: gridPos,
-                gapLengthMeters: gapMeters,
+                gapLengthMeters: unit.toMeters(port.gapLength),
                 excitation: setup.excitation,
                 frequency: setup.frequency,
                 isExcited: port.isExcited,
                 amplitude: port.amplitude,
-                dT: { [weak op] in op?.dTValueOrZero() ?? 0 }
+                dT: { [weak op] in op?.dT ?? 0 }
             )
             portExtensions.append(ext)
             factories.append { ext }
@@ -518,6 +668,7 @@ public final class SimulationRunner: ObservableObject {
 
         op.extensionFactories = factories
         op.calcECOperator()
+        applyHardWallBoundaries(op: op, boundaries: setup.boundaries)
 
         let engine = Engine.make(op: op)
         handle.engine = engine
@@ -528,30 +679,170 @@ public final class SimulationRunner: ObservableObject {
         self.gridSize = op.numLines
         self.isRunning = true
         self.progress = 0
+        self.s11DbAtCenter = nil
+        self.s11Spectrum = []
+        self.wasStoppedEarly = false
 
         let maxSteps = UInt(setup.solver.maximumTimeSteps)
         let chunk: UInt = 500
+        let frequency = setup.frequency
+        let excitedPortName = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.name
+        let impedanceOhm = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.impedanceOhm
+        let spectrumPointCount = self.spectrumPointCount
+        let portExtensionsSnapshot = portExtensions
+        let runID = nextRunID
+        let variableSnapshot = resolved.variables.values
+        let gridSizeForHistory = op.numLines
 
-        Task.detached(priority: .userInitiated) { [weak self] in
+        self.lastExcitedPortName = excitedPortName
+        self.lastImpedanceOhm = impedanceOhm
+        self.sweptFrequencyRange = frequency
+        self.plotRange = frequency
+        self.nextRunID += 1
+
+        let task = Task.detached(priority: .userInitiated) { [weak self] in
             var done: UInt = 0
+            var stopped = false
             while done < maxSteps {
+                if Task.isCancelled { stopped = true; break }
                 let step = min(chunk, maxSteps - done)
                 engine.iterateTS(step)
                 done += step
                 let fraction = Double(done) / Double(maxSteps)
-                await MainActor.run { self?.progress = fraction }
+                await MainActor.run { [weak self] in self?.progress = fraction }
             }
-            await MainActor.run {
-                self?.isRunning = false
-                self?.finishAndComputeS11(centerHertz: setup.frequency.centerHertz, ports: portExtensions, resolved: resolved)
+
+            let didStop = stopped
+            guard let excited = portExtensionsSnapshot.first(where: { $0.extensionName == "Port_\(excitedPortName)" }),
+                  excited.timeSeconds.count > 1 else {
+                await MainActor.run { [weak self] in
+                    self?.isRunning = false
+                    self?.wasStoppedEarly = didStop
+                }
+                return
+            }
+
+            // The DFT integrates over whatever was recorded, so a stopped
+            // run still yields a (less converged) spectrum instead of
+            // nothing — useful for an early peek at where a resonance is
+            // heading without waiting for the full step count.
+            let centerDb = PortSpectrum.s11(port: excited, impedanceOhm: impedanceOhm, atHertz: frequency.centerHertz)
+            var spectrumBuilder: [S11Point] = []
+            spectrumBuilder.reserveCapacity(spectrumPointCount)
+            let count = max(spectrumPointCount, 2)
+            for i in 0..<count {
+                let f = frequency.minimumHertz
+                    + (frequency.maximumHertz - frequency.minimumHertz) * Double(i) / Double(count - 1)
+                let db = PortSpectrum.s11(port: excited, impedanceOhm: impedanceOhm, atHertz: f)
+                spectrumBuilder.append(S11Point(hertz: f, decibels: db))
+            }
+            let finalSpectrum = spectrumBuilder
+            let record = RunRecord(
+                id: runID,
+                timestamp: Date(),
+                variableSnapshot: variableSnapshot,
+                sweptFrequencyRange: frequency,
+                maximumTimeSteps: Int(maxSteps),
+                wasStoppedEarly: didStop,
+                gridSize: gridSizeForHistory,
+                s11Spectrum: finalSpectrum,
+                s11DbAtCenter: centerDb
+            )
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.isRunning = false
+                self.wasStoppedEarly = didStop
+                self.s11DbAtCenter = centerDb
+                self.s11Spectrum = finalSpectrum
+                self.history.append(record)
             }
         }
+        currentTask = task
+        return task
     }
 
-    private func finishAndComputeS11(centerHertz: Double, ports: [LumpedPortExtension], resolved: ResolvedModel) {
-        guard let excitedPort = resolved.simulation.ports.first(where: \.isExcited),
-              let ext = ports.first(where: { $0.extensionName == "Port_\(excitedPort.name)" }) else { return }
-        s11DbAtCenter = PortSpectrum.s11(port: ext, impedanceOhm: excitedPort.impedanceOhm, atHertz: centerHertz)
+    /// Maps `.electric`/`.magnetic` faces to a permanent hard wall (the
+    /// operator coefficients are zeroed once, right after
+    /// `calcECOperator()`). `.pml` is handled separately by the graded loss
+    /// layer set up before `calcECOperator()` runs; `.periodic` has no
+    /// implementation here, so those faces are simply left as they are
+    /// (equivalent to an untreated, reflective open boundary).
+    private func applyHardWallBoundaries(op: Operator, boundaries: BoundarySettings) {
+        let faces: [BoundaryCondition] = [
+            boundaries.xMin, boundaries.xMax,
+            boundaries.yMin, boundaries.yMax,
+            boundaries.zMin, boundaries.zMax
+        ]
+        let electric = faces.map { $0 == .electric }
+        let magnetic = faces.map { $0 == .magnetic }
+        if electric.contains(true) { op.applyElectricBC(electric) }
+        if magnetic.contains(true) { op.applyMagneticBC(magnetic) }
+    }
+
+    private func makeAbsorbingBoundary(boundaries: BoundarySettings, lines: [[Double]]) -> AbsorbingBoundarySettings? {
+        let faces: [BoundaryCondition] = [
+            boundaries.xMin, boundaries.xMax,
+            boundaries.yMin, boundaries.yMax,
+            boundaries.zMin, boundaries.zMax
+        ]
+        let absorbingFaces = faces.map { $0 == .pml }
+        guard absorbingFaces.contains(true), boundaries.pmlCellCount > 0 else { return nil }
+
+        // Gedney's commonly-used estimate for a graded absorber's peak
+        // conductivity, evaluated at the smallest cell size present (a
+        // conservative choice: it over-absorbs a bit rather than
+        // under-absorbing and letting more energy leak back in).
+        let smallestCell = lines.flatMap { axisLines in
+            zip(axisLines, axisLines.dropFirst()).map { $1 - $0 }
+        }.filter { $0 > 0 }.min() ?? 1e-3
+        let order = 3.0
+        let sigmaMax = (order + 1) / (150 * .pi * smallestCell)
+
+        return AbsorbingBoundarySettings(
+            absorbingFaces: absorbingFaces,
+            cellCount: boundaries.pmlCellCount,
+            gradingOrder: order,
+            maxElectricLossSPerM: sigmaMax
+        )
+    }
+
+    /// Samples the material a small distance beyond each terminal, along the
+    /// port's own axis, and reports whether either side looks conductive.
+    /// Sampling exactly *at* begin/end would land right on the vacuum/metal
+    /// interface, which quarter-cell averaging can blend into an ambiguous
+    /// mid-value — stepping out by one gap length lands solidly inside
+    /// whatever body (if any) actually continues the circuit past the port.
+    private func hasConductorNearPort(
+        _ port: ResolvedPort,
+        materialProvider: CADMaterialProvider,
+        unit: LengthUnit
+    ) -> Bool {
+        guard let begin = port.begin, let end = port.end else { return true } // waveguide ports: not this check's business
+        let delta = end - begin
+        let beyondBegin = begin - delta
+        let beyondEnd = end + delta
+        let direction = axisIndex(port.direction)
+
+        // Comfortably above a lossy dielectric's conductivity, comfortably
+        // below the solver's PEC approximation (1e7 S/m) — a coarse but
+        // effective "is this basically a conductor" threshold.
+        let conductiveThresholdSPerM = 1.0
+
+        for point in [beyondBegin, beyondEnd] {
+            let coords = (unit.toMeters(point.x), unit.toMeters(point.y), unit.toMeters(point.z))
+            let sigma = materialProvider.material(direction: direction, coords: coords, matType: 1)
+            if sigma >= conductiveThresholdSPerM { return true }
+        }
+        return false
+    }
+
+    private func axisIndex(_ axis: Axis) -> Int {
+        switch axis {
+        case .x: return 0
+        case .y: return 1
+        case .z: return 2
+        }
     }
 
     private func nearestIndex(_ lines: [Double], _ value: Double) -> Int {
@@ -564,14 +855,4 @@ public final class SimulationRunner: ObservableObject {
         }
         return bestIndex
     }
-}
-
-// MARK: - Small helpers expected to exist / be added on your side
-
-private extension Operator {
-    /// Operator.dT jest `private(set)`; jeśli w Twojej wersji nie jest
-    /// publicznie czytelny, dodaj w FDTDSolver.swift:
-    ///   public var timestepSeconds: Double { dT }
-    /// i podmień to wywołanie na `self.timestepSeconds`.
-    func dTValueOrZero() -> Double { 0 } // PLACEHOLDER - patrz komentarz wyżej
 }

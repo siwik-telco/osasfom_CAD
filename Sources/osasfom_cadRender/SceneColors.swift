@@ -23,5 +23,9 @@ public enum SceneStyle {
     public static let axisZ = NSColor.systemBlue
     public static let domain = NSColor.systemTeal
     public static let port = NSColor.systemPink
+    /// A lumped port's first terminal (`begin`) — voltage is measured from
+    /// here toward `end`, so begin/end get visually distinct colors.
+    public static let portBegin = NSColor.systemRed
+    public static let portEnd = NSColor.systemBlue
     public static let errorTint = NSColor.systemRed
 }

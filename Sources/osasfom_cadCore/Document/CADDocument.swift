@@ -1,6 +1,19 @@
 import Combine
 import Foundation
 
+/// Identifies which port terminal a viewport face-click should write into.
+public struct FacePickRequest: Equatable, Sendable {
+    public enum Terminal: Sendable { case begin, end }
+
+    public let portID: UUID
+    public let terminal: Terminal
+
+    public init(portID: UUID, terminal: Terminal) {
+        self.portID = portID
+        self.terminal = terminal
+    }
+}
+
 /// The editable document.
 ///
 /// Every mutation goes through `perform`, which is the one place that snapshots
@@ -13,6 +26,10 @@ public final class CADDocument: ObservableObject {
     @Published public private(set) var resolved: ResolvedModel
     @Published public var selectedBodyID: UUID?
     @Published public var selectedPortID: UUID?
+    /// Non-nil while the viewport is waiting for the user to click a body's
+    /// face to set one terminal of a lumped port. The view layer arms this,
+    /// the viewport clears it once a face is picked (or the user cancels).
+    @Published public var facePickRequest: FacePickRequest?
     @Published public private(set) var fileURL: URL?
     @Published public private(set) var hasUnsavedChanges: Bool = false
     @Published public private(set) var canUndo: Bool = false
@@ -442,6 +459,15 @@ public final class CADDocument: ObservableObject {
 
     public func solverExportData() throws -> Data {
         try SolverExportEncoder.encode(state: state, resolved: resolved)
+    }
+
+    /// Binary STL of every visible body's surface, in the project's own
+    /// length unit — for comparing this model's geometry against another EM
+    /// tool (e.g. CST) that can import STL. Unlike the solver export, this
+    /// never refuses on model errors: a body that failed to resolve is
+    /// simply absent, same as everywhere else a resolved model is used.
+    public func stlExportData(segments: Int = 32) -> Data {
+        STLExporter.encode(resolved: resolved, segments: segments)
     }
 
     public func save(to url: URL) throws {

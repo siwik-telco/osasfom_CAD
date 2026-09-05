@@ -39,23 +39,49 @@ osasfom_cad
 │   │   ├── IO/              # project file, legacy import, solver export
 │   │   └── Document/        # document + snapshot undo
 │   ├── osasfom_cadRender    # SceneKit scene controller
-│   ├── osasfom_cad          # SwiftUI app
-│   ├── FDTDSolver.swift     # in-progress Yee-grid FDTD engine (openEMS port, GPLv3)
-│   └── FDTDCADBridge.swift  # in-progress bridge: ResolvedModel -> grid -> engine
-└── Tests/osasfom_cadCoreTests
+│   ├── osasfom_cadSolver    # FDTD engine (openEMS port, GPLv3) + CAD bridge
+│   └── osasfom_cad          # SwiftUI app
+└── Tests
+    ├── osasfom_cadCoreTests
+    └── osasfom_cadSolverTests
 ```
 
 Core imports neither AppKit nor SceneKit, so it can be driven from a
 command-line mesher or solver harness and is fully unit-testable.
 
-`FDTDSolver.swift` and `FDTDCADBridge.swift` are a working skeleton of the
-solver itself — a Swift port of openEMS's `Engine`/`Operator` core, and a
-bridge that meshes a `ResolvedModel` into Yee grid lines and drives the
-engine to extract S11 from a lumped port. They are not yet wired into
-`Package.swift` as a target (no product depends on them, and they are
-untested), so they build with the rest of the app only if added to a target
-manually. Being a derivative of GPLv3-licensed openEMS code, this part of the
-project is GPLv3 (see `LICENSE`).
+### Solver
+
+`osasfom_cadSolver` is a real, buildable, tested target: a Swift port of
+openEMS's Yee-grid `Engine`/`Operator` core, plus a bridge
+(`GridMesher`, `CADMaterialProvider`, `SimulationRunner`) that meshes a
+`ResolvedModel`, drives the engine, and extracts S11 from an excited lumped
+port. `SimulationRunner.run(document:)` is the entry point; it is not yet
+wired into the app's UI, only into the library graph.
+
+It has one working, tested capability end to end: **return loss of a
+lumped-port antenna** (`osasfom_cadSolverTests/DipoleReturnLossTests.swift`
+builds a half-wave dipole purely through the public CAD model and asserts a
+physically-valid resonance dip in the S11 sweep). Beyond that:
+
+- The lumped port is resistively stamped (its reference impedance is added
+  directly to the local Yee-edge conductance, not just a lossless soft
+  source), and its current is read via curl(H) around the edge — not the
+  edge's own-direction H component, which vanishes by symmetry on an axis
+  like a dipole's centerline.
+- Boundaries: `.electric`/`.magnetic` faces become permanent hard walls.
+  `.pml` faces get a graded, impedance-matched **lossy layer**, not a true
+  PML — no complex-frequency-shifted coordinate stretching, so it absorbs
+  normal-incidence waves reasonably well but reflects more than real PML at
+  oblique angles and low frequencies. `.periodic` is unimplemented.
+- The port-current extraction and the resistive stamp are exact only when
+  the feed gap spans exactly one Yee edge, which is guaranteed by
+  `GridMesher` always placing a fixed grid line at each port terminal.
+- Everything else a full antenna solver needs — waveguide ports,
+  near-to-far-field transform, multi-port S-parameters, adaptive
+  time-stepping/frequency-domain features — is not implemented.
+
+Being a derivative of GPLv3-licensed openEMS code, `osasfom_cadSolver` is
+GPLv3 (see `LICENSE`).
 
 ## Modelling
 
@@ -177,8 +203,7 @@ Requires macOS 13+ and Swift 5.9.
 ## Not yet implemented
 
 Sketch-based modelling, extrude, boolean operations, face and edge selection,
-and snapping. The export schema is the interface the mesher and solver are
-built against; a first skeleton of the solver itself exists
-(`FDTDSolver.swift`, `FDTDCADBridge.swift`) but is not yet wired into the
-package as a buildable, tested target, and its port-physics and PML are
-still placeholders.
+and snapping. On the solver side: a UI to launch a run and see its results,
+waveguide ports, near/far-field transforms, multi-port S-parameters, and a
+true PML (the current absorbing boundary is an approximate graded lossy
+layer — see [Solver](#solver)).

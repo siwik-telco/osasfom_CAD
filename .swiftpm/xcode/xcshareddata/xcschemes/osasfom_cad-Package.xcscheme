@@ -62,6 +62,20 @@
                ReferencedContainer = "container:">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "osasfom_cadSolver"
+               BuildableName = "osasfom_cadSolver"
+               BlueprintName = "osasfom_cadSolver"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
@@ -78,6 +92,16 @@
                BlueprintIdentifier = "osasfom_cadCoreTests"
                BuildableName = "osasfom_cadCoreTests"
                BlueprintName = "osasfom_cadCoreTests"
+               ReferencedContainer = "container:">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "osasfom_cadSolverTests"
+               BuildableName = "osasfom_cadSolverTests"
+               BlueprintName = "osasfom_cadSolverTests"
                ReferencedContainer = "container:">
             </BuildableReference>
          </TestableReference>

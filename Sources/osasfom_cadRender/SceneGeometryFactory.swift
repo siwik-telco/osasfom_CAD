@@ -178,6 +178,48 @@ public enum SceneGeometryFactory {
         return node
     }
 
+    /// A solid cylindrical tube from `start` to `end` — used where a plain
+    /// `.line` primitive (always hairline-thin regardless of camera distance)
+    /// isn't visible enough, e.g. a lumped port's feed gap.
+    public static func makeTubeNode(from start: Vec3, to end: Vec3, radius: Double, color: NSColor) -> SCNNode {
+        let delta = end - start
+        let length = (delta.x * delta.x + delta.y * delta.y + delta.z * delta.z).squareRoot()
+        guard length > 0 else { return SCNNode() }
+
+        let cylinder = SCNCylinder(radius: CGFloat(max(radius, 1e-6)), height: CGFloat(length))
+        cylinder.materials = [makeLineMaterial(color: color)]
+
+        let node = SCNNode(geometry: cylinder)
+        node.position = vector(Vec3(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2, z: (start.z + end.z) / 2))
+        node.rotation = rotationFromYAxis(to: Vec3(x: delta.x / length, y: delta.y / length, z: delta.z / length))
+        return node
+    }
+
+    /// A small solid sphere at a point — used to mark a lumped port's begin
+    /// (red) and end (blue) terminals distinctly.
+    public static func makeMarkerNode(at point: Vec3, radius: Double, color: NSColor) -> SCNNode {
+        let sphere = SCNSphere(radius: CGFloat(max(radius, 1e-6)))
+        sphere.materials = [makeLineMaterial(color: color)]
+        let node = SCNNode(geometry: sphere)
+        node.position = vector(point)
+        return node
+    }
+
+    /// Axis-angle rotation taking SceneKit's default +Y cylinder axis onto
+    /// unit vector `direction`, i.e. `cross((0,1,0), direction)` as the axis
+    /// and `acos(dot((0,1,0), direction))` as the angle.
+    private static func rotationFromYAxis(to direction: Vec3) -> SCNVector4 {
+        let dot = direction.y
+        if dot > 1 - 1e-9 { return SCNVector4(0, 1, 0, 0) }
+        if dot < -1 + 1e-9 { return SCNVector4(1, 0, 0, Double.pi) }
+
+        let cross = Vec3(x: direction.z, y: 0, z: -direction.x)
+        let crossLength = (cross.x * cross.x + cross.y * cross.y + cross.z * cross.z).squareRoot()
+        guard crossLength > 0 else { return SCNVector4(0, 1, 0, 0) }
+        let angle = acos(max(-1, min(1, dot)))
+        return SCNVector4(cross.x / crossLength, cross.y / crossLength, cross.z / crossLength, angle)
+    }
+
     public static func vector(_ value: Vec3) -> SCNVector3 {
         SCNVector3(CGFloat(value.x), CGFloat(value.y), CGFloat(value.z))
     }

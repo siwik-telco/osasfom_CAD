@@ -39,13 +39,29 @@ public struct FDTDConstants {
 public final class FDTDArray {
     public let name: String
     public let numLines: (Int, Int, Int)
-    private var data: [FDTDFloat]
+    /// Raw storage, not `[FDTDFloat]`: a Swift `Array`'s subscript performs a
+    /// copy-on-write uniqueness check on every access — cheap single-
+    /// threaded, but under concurrent access from multiple cores (as
+    /// `Engine`'s chunked parallel update loops do) those checks all hit the
+    /// same buffer's reference count and cause exactly the kind of
+    /// cross-core cache-line contention that erases any benefit from
+    /// splitting the work — confirmed by benchmark: with `[FDTDFloat]`
+    /// storage, "parallel" was consistently *slower* than sequential even on
+    /// a 512k-cell grid. A bare pointer has no such bookkeeping.
+    private let buffer: UnsafeMutablePointer<FDTDFloat>
+    private let count: Int
 
     public init(name: String, numLines: (Int, Int, Int)) {
         self.name = name
         self.numLines = numLines
-        let count = 3 * numLines.0 * numLines.1 * numLines.2
-        self.data = [FDTDFloat](repeating: 0, count: count)
+        self.count = 3 * numLines.0 * numLines.1 * numLines.2
+        self.buffer = .allocate(capacity: count)
+        self.buffer.initialize(repeating: 0, count: count)
+    }
+
+    deinit {
+        buffer.deinitialize(count: count)
+        buffer.deallocate()
     }
 
     @inline(__always)
@@ -55,12 +71,12 @@ public final class FDTDArray {
 
     @inline(__always)
     public func get(_ n: Int, _ x: Int, _ y: Int, _ z: Int) -> FDTDFloat {
-        data[index(n, x, y, z)]
+        buffer[index(n, x, y, z)]
     }
 
     @inline(__always)
     public func set(_ n: Int, _ x: Int, _ y: Int, _ z: Int, _ value: FDTDFloat) {
-        data[index(n, x, y, z)] = value
+        buffer[index(n, x, y, z)] = value
     }
 
     @inline(__always)
@@ -74,7 +90,7 @@ public final class FDTDArray {
     }
 
     public func fill(_ value: FDTDFloat) {
-        for i in data.indices { data[i] = value }
+        for i in 0..<count { buffer[i] = value }
     }
 }
 
@@ -200,77 +216,144 @@ public final class Engine {
     // domain edge, which is what a zero-length ghost step gives you).
     // If you have access to an unmangled engine.cpp, diff this against it.
 
+    /// The discrete curl(H) circulating around the Yee edge `(direction,
+    /// pos)` — i.e. the total conduction+displacement current threading the
+    /// dual face at that edge (Ampère's law), exactly the quantity that
+    /// drives the E-field update there. This is also the physically correct
+    /// "branch current" for a lumped element sitting on that edge: **not**
+    /// `getCurr(direction, pos)`, which is the H-field component pointing
+    /// *along* the edge's own direction — on an axis of symmetry (e.g. the
+    /// centerline of a dipole) that component is identically zero by
+    /// symmetry, even though real current is flowing.
+    public func curlH(direction n: Int, pos: (Int, Int, Int)) -> Double {
+        let nP  = (n + 1) % 3
+        let nPP = (n + 2) % 3
+
+        let shiftP:  Int = componentIndex(pos, nP)  > 0 ? 1 : 0
+        let shiftPP: Int = componentIndex(pos, nPP) > 0 ? 1 : 0
+
+        let posP  = shifted(pos, dim: nP,  by: -shiftP)
+        let posPP = shifted(pos, dim: nPP, by: -shiftPP)
+
+        return curr.get(nPP, pos) - curr.get(nPP, posP)
+             - curr.get(nP,  pos) + curr.get(nP,  posPP)
+    }
+
+    /// Below this many total cells in the range being updated,
+    /// `concurrentPerform`'s per-call dispatch/scheduling overhead measured
+    /// out to exceed the work it saves — confirmed by benchmark, not just
+    /// theory: a naive one-`concurrentPerform`-iteration-per-X-plane version
+    /// made a real (~16k-cell) antenna run **3.7x slower** despite using 9x
+    /// the CPU, because it re-dispatched across all cores twice per
+    /// timestep for planes with only microseconds of actual work each.
+    /// Below this threshold, run the plain sequential loop; above it, split
+    /// into a handful of core-sized chunks (not one dispatch per plane) so
+    /// scheduling overhead stays O(core count), not O(numX).
+    /// `var`, not `let`, so tests can force the sequential path on a large
+    /// grid for a controlled before/after comparison.
+    static var parallelWorkThreshold = 400_000
+
     /// Port of Engine::UpdateVoltages(startX, numX)
     /// Advances the electric field ("volt", E on Yee edges) using curl(H).
+    ///
+    /// Parallelized across X-plane chunks: this only ever *writes* `volt`
+    /// within its own chunk's planes, and only *reads* `curr`, which no code
+    /// mutates during this phase (it was last written in the previous
+    /// timestep's updateCurrents and won't be touched again until the next
+    /// one) — so concurrent chunks never race, even though a curl at plane
+    /// `x` may read `curr` from a neighboring plane `x-1` in another chunk.
     public func updateVoltages(startX: Int, numX: Int) {
-        let (nx, ny, nz) = numLines
-        var pos = (x: startX, y: 0, z: 0)
+        guard numX > 0 else { return }
+        let (_, ny, nz) = numLines
+        guard numX * ny * nz >= Self.parallelWorkThreshold else {
+            for i in 0..<numX { updateVoltagesPlane(startX + i) }
+            return
+        }
+        let chunkCount = Swift.min(numX, Swift.max(1, ProcessInfo.processInfo.activeProcessorCount))
+        DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
+            let (lo, hi) = Self.chunkRange(chunk, of: chunkCount, over: numX)
+            for i in lo..<hi { self.updateVoltagesPlane(startX + i) }
+        }
+    }
 
-        for _ in 0..<numX {
-            for y in 0..<ny {
-                pos.y = y
-                for z in 0..<nz {
-                    pos.z = z
-                    for n in 0..<3 {
-                        let nP  = (n + 1) % 3
-                        let nPP = (n + 2) % 3
+    /// Splits `[0, total)` into `count` near-equal, contiguous chunks —
+    /// chunk `index`'s half-open range.
+    private static func chunkRange(_ index: Int, of count: Int, over total: Int) -> (Int, Int) {
+        let base = total / count
+        let remainder = total % count
+        let lo = index * base + Swift.min(index, remainder)
+        let hi = lo + base + (index < remainder ? 1 : 0)
+        return (lo, hi)
+    }
 
-                        let shiftP:  Int = componentIndex(pos, nP)  > 0 ? 1 : 0
-                        let shiftPP: Int = componentIndex(pos, nPP) > 0 ? 1 : 0
+    private func updateVoltagesPlane(_ x: Int) {
+        let (_, ny, nz) = numLines
+        var pos = (x: x, y: 0, z: 0)
+        for y in 0..<ny {
+            pos.y = y
+            for z in 0..<nz {
+                pos.z = z
+                for n in 0..<3 {
+                    let curl = curlH(direction: n, pos: pos)
 
-                        let posP  = shifted(pos, dim: nP,  by: -shiftP)
-                        let posPP = shifted(pos, dim: nPP, by: -shiftPP)
+                    let vv = op.getVV(n, pos.x, pos.y, pos.z)
+                    let vi = op.getVI(n, pos.x, pos.y, pos.z)
 
-                        let curl = curr.get(nPP, pos) - curr.get(nPP, posP)
-                                 - curr.get(nP,  pos) + curr.get(nP,  posPP)
-
-                        let vv = op.getVV(n, pos.x, pos.y, pos.z)
-                        let vi = op.getVI(n, pos.x, pos.y, pos.z)
-
-                        let newV = vv * volt.get(n, pos) + vi * curl
-                        volt.set(n, pos, newV)
-                    }
+                    let newV = vv * volt.get(n, pos) + vi * curl
+                    volt.set(n, pos, newV)
                 }
             }
-            pos.x += 1
         }
     }
 
     /// Port of Engine::UpdateCurrents(startX, numX)
     /// Advances the magnetic field ("curr", H on Yee faces) using curl(E).
+    ///
+    /// Parallelized the same way as `updateVoltages`, with the roles of
+    /// `volt`/`curr` swapped: only writes `curr` at its own plane, only
+    /// reads `volt`, which nothing mutates during this phase.
     public func updateCurrents(startX: Int, numX: Int) {
-        let (nx, ny, nz) = numLines
-        var pos = (x: startX, y: 0, z: 0)
+        guard numX > 0 else { return }
+        let (_, ny, nz) = numLines
+        guard numX * ny * nz >= Self.parallelWorkThreshold else {
+            for i in 0..<numX { updateCurrentsPlane(startX + i) }
+            return
+        }
+        let chunkCount = Swift.min(numX, Swift.max(1, ProcessInfo.processInfo.activeProcessorCount))
+        DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
+            let (lo, hi) = Self.chunkRange(chunk, of: chunkCount, over: numX)
+            for i in lo..<hi { self.updateCurrentsPlane(startX + i) }
+        }
+    }
 
-        for _ in 0..<numX {
-            for y in 0..<ny {
-                pos.y = y
-                for z in 0..<nz {
-                    pos.z = z
-                    for n in 0..<3 {
-                        let nP  = (n + 1) % 3
-                        let nPP = (n + 2) % 3
+    private func updateCurrentsPlane(_ x: Int) {
+        let (_, ny, nz) = numLines
+        var pos = (x: x, y: 0, z: 0)
+        for y in 0..<ny {
+            pos.y = y
+            for z in 0..<nz {
+                pos.z = z
+                for n in 0..<3 {
+                    let nP  = (n + 1) % 3
+                    let nPP = (n + 2) % 3
 
-                        let shiftP:  Int = componentIndex(pos, nP)  < numLines(nP)  - 1 ? 1 : 0
-                        let shiftPP: Int = componentIndex(pos, nPP) < numLines(nPP) - 1 ? 1 : 0
+                    let shiftP:  Int = componentIndex(pos, nP)  < numLines(nP)  - 1 ? 1 : 0
+                    let shiftPP: Int = componentIndex(pos, nPP) < numLines(nPP) - 1 ? 1 : 0
 
-                        let posP  = shifted(pos, dim: nP,  by: shiftP)
-                        let posPP = shifted(pos, dim: nPP, by: shiftPP)
+                    let posP  = shifted(pos, dim: nP,  by: shiftP)
+                    let posPP = shifted(pos, dim: nPP, by: shiftPP)
 
-                        let curl = volt.get(nP,  posPP) - volt.get(nP,  pos)
-                                 - volt.get(nPP, posP)  + volt.get(nPP, pos)
+                    let curl = volt.get(nP,  posPP) - volt.get(nP,  pos)
+                             - volt.get(nPP, posP)  + volt.get(nPP, pos)
 
-                        let ii = op.getII(n, pos.x, pos.y, pos.z)
-                        let iv = op.getIV(n, pos.x, pos.y, pos.z)
+                    let ii = op.getII(n, pos.x, pos.y, pos.z)
+                    let iv = op.getIV(n, pos.x, pos.y, pos.z)
 
-                        let newI = ii * curr.get(n, pos) + iv * curl
-                        curr.set(n, pos, newI)
-                    }
+                    let newI = ii * curr.get(n, pos) + iv * curl
+                    curr.set(n, pos, newI)
                 }
             }
-            pos.x += 1
         }
-        _ = nx // silence unused warning when nx unused directly
     }
 
     // small helpers for tuple-position component access
@@ -338,6 +421,41 @@ public protocol MaterialProvider: AnyObject {
 
 // MARK: - Operator  (port of operator.h / operator.cpp core)
 
+/// A graded, impedance-ratio-matched lossy layer near the domain boundary.
+///
+/// This is **not** a true PML: a real PML uses complex-frequency-shifted
+/// coordinate stretching so a plane wave sees zero reflection at any angle
+/// and frequency. This is the much older, simpler "resistive taper"
+/// technique — an electric conductivity that ramps up smoothly over the last
+/// `cellCount` cells before a boundary, with a magnetic loss set so the
+/// layer's wave impedance stays close to the background (which is what
+/// keeps normal-incidence reflection low). Oblique and low-frequency waves
+/// still reflect more than they would from a real PML, but it is a large
+/// improvement over a hard wall and is enough to identify a resonance in a
+/// return-loss sweep.
+public struct AbsorbingBoundarySettings {
+    /// `[xMin, xMax, yMin, yMax, zMin, zMax]`; true = that face is absorbing.
+    public var absorbingFaces: [Bool]
+    public var cellCount: Int
+    /// Grading exponent for the loss ramp (3 is the common PML default).
+    public var gradingOrder: Double
+    /// Electric conductivity [S/m] reached at the outermost cell of the layer.
+    public var maxElectricLossSPerM: Double
+
+    public init(
+        absorbingFaces: [Bool],
+        cellCount: Int,
+        gradingOrder: Double = 3,
+        maxElectricLossSPerM: Double
+    ) {
+        precondition(absorbingFaces.count == 6)
+        self.absorbingFaces = absorbingFaces
+        self.cellCount = max(0, cellCount)
+        self.gradingOrder = gradingOrder
+        self.maxElectricLossSPerM = maxElectricLossSPerM
+    }
+}
+
 /// Grid + EC-coefficient generation for the Yee FDTD scheme.
 /// Geometry-specific effective-material averaging is delegated to a
 /// `MaterialProvider` (your CAD layer) instead of CSXCAD.
@@ -364,6 +482,28 @@ public final class Operator {
     public var backgroundKappa: Double = 0.0
     public var backgroundSigma: Double = 0.0
     public var backgroundDensity: Double = 0.0
+
+    /// Graded loss layer applied near the domain boundary; `nil` disables it
+    /// (boundary then behaves as a perfect reflector unless `applyElectricBC`
+    /// / `applyMagneticBC` are also used to hard-wall specific faces).
+    public var absorbingBoundary: AbsorbingBoundarySettings?
+
+    /// A discrete two-terminal resistor stamped directly across a single Yee
+    /// edge — used for a lumped port's source resistance. Its conductance
+    /// (1/ohms) adds straight into that edge's G, alongside whatever the
+    /// material provider contributes there.
+    ///
+    /// direction -> flatIndex -> total conductance [S] to add.
+    private var lumpedResistorConductance: [Int: [Int: Double]] = [:]
+
+    /// Registers a resistor of `ohms` across the Yee edge at `(direction,
+    /// pos)`. Call before `calcECOperator()`. Safe to call more than once for
+    /// the same edge (conductances add, as real parallel resistors would).
+    public func addLumpedResistor(direction: Int, pos: (Int, Int, Int), ohms: Double) {
+        guard ohms > 0 else { return }
+        let i = flatIndex(pos)
+        lumpedResistorConductance[direction, default: [:]][i, default: 0] += 1.0 / ohms
+    }
 
     public var materialProvider: MaterialProvider?
     public var matAverageMethod: MatAverageMethod = .quarterCell
@@ -426,13 +566,22 @@ public final class Operator {
 
     // MARK: Disc line / geometry helpers (GetDiscLine, GetDiscDelta, GetEdgeLength, ...)
 
+    /// Positions one cell outside the domain (as the quarter-cell averaging's
+    /// quadrant shifts can request at the very first/last line) are clamped
+    /// to the boundary line rather than indexed out of range — equivalent to
+    /// extending the outermost cell, a standard, harmless simplification at
+    /// a domain edge that is about to be PML/PEC/PMC terminated anyway.
     public func getDiscLine(_ n: Int, _ pos: Int, dualMesh: Bool = false) -> Double {
-        guard n >= 0 && n <= 2, pos < numLinesFor(n) else { return 0.0 }
-        if !dualMesh { return discLines[n][pos] }
-        if pos < numLinesFor(n) - 1 {
-            return 0.5 * (discLines[n][pos] + discLines[n][pos + 1])
+        guard n >= 0 && n <= 2 else { return 0.0 }
+        let count = numLinesFor(n)
+        guard count > 0 else { return 0.0 }
+        let clamped = min(max(pos, 0), count - 1)
+        if !dualMesh { return discLines[n][clamped] }
+        if clamped < count - 1 {
+            return 0.5 * (discLines[n][clamped] + discLines[n][clamped + 1])
         }
-        return discLines[n][pos] + 0.5 * (discLines[n][pos] - discLines[n][pos - 1])
+        guard count > 1 else { return discLines[n][clamped] }
+        return discLines[n][clamped] + 0.5 * (discLines[n][clamped] - discLines[n][clamped - 1])
     }
 
     public func getDiscDelta(_ n: Int, _ pos: Int, dualMesh: Bool = false) -> Double {
@@ -508,14 +657,56 @@ public final class Operator {
         let delta1 = getEdgeLength(ny, pos)
         let area1  = getEdgeArea(ny, pos)
         let C = delta1 != 0 ? effMat.eps   * area1 / delta1 : 0
-        let G = delta1 != 0 ? effMat.kappa * area1 / delta1 : 0
+        var G = delta1 != 0 ? effMat.kappa * area1 / delta1 : 0
 
         let delta2 = getEdgeLength(ny, pos, dualMesh: true)
         let area2  = getEdgeArea(ny, pos, dualMesh: true)
         let L = delta2 != 0 ? effMat.mue   * area2 / delta2 : 0
-        let R = delta2 != 0 ? effMat.sigma * area2 / delta2 : 0
+        var R = delta2 != 0 ? effMat.sigma * area2 / delta2 : 0
+
+        let absorbing = absorbingLoss(direction: ny, pos: pos)
+        if delta1 != 0 { G += absorbing.electricSPerM * area1 / delta1 }
+        if delta2 != 0 { R += absorbing.magneticOhmPerM * area2 / delta2 }
+
+        // A literal two-terminal resistor across this exact edge contributes
+        // its conductance (1/ohms) directly — no area/length scaling, unlike
+        // a material's per-unit-length kappa.
+        if let extra = lumpedResistorConductance[ny]?[flatIndex(pos)] {
+            G += extra
+        }
 
         return (C, G, L, R)
+    }
+
+    /// Graded electric/magnetic loss from `absorbingBoundary`, evaluated at
+    /// one Yee edge. The magnetic loss is scaled by µ0/ε0 relative to the
+    /// electric one (the classic loss-matching condition) so the layer's
+    /// wave impedance stays close to free space, keeping normal-incidence
+    /// reflection low despite this not being a true PML.
+    private func absorbingLoss(direction: Int, pos: (Int, Int, Int)) -> (electricSPerM: Double, magneticOhmPerM: Double) {
+        guard let settings = absorbingBoundary, settings.cellCount > 0 else { return (0, 0) }
+
+        var depthFactor = 0.0
+        let coords = [pos.0, pos.1, pos.2]
+        for dim in 0..<3 {
+            let count = numLinesFor(dim)
+            let distanceFromMin = coords[dim]
+            let distanceFromMax = count - 1 - coords[dim]
+
+            if settings.absorbingFaces[2 * dim], distanceFromMin < settings.cellCount {
+                let x = Double(settings.cellCount - distanceFromMin) / Double(settings.cellCount)
+                depthFactor = max(depthFactor, pow(x, settings.gradingOrder))
+            }
+            if settings.absorbingFaces[2 * dim + 1], distanceFromMax < settings.cellCount {
+                let x = Double(settings.cellCount - distanceFromMax) / Double(settings.cellCount)
+                depthFactor = max(depthFactor, pow(x, settings.gradingOrder))
+            }
+        }
+
+        guard depthFactor > 0 else { return (0, 0) }
+        let sigmaE = settings.maxElectricLossSPerM * depthFactor
+        let sigmaM = sigmaE * FDTDConstants.MUE0 / FDTDConstants.EPS0
+        return (sigmaE, sigmaM)
     }
 
     /// Port of Operator::Calc_EffMatPos -> dispatches to quarter-cell / cell-center averaging

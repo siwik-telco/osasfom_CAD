@@ -9,6 +9,7 @@ enum DocumentCommand {
     case save
     case saveAs
     case exportSolverDeck
+    case exportSTL
     case zoomToFit
 }
 
@@ -53,6 +54,16 @@ enum ProjectPanels {
         panel.nameFieldStringValue = "\(suggestedName)-fdtd.json"
         panel.canCreateDirectories = true
         panel.message = "Export the resolved FDTD setup. All lengths are in metres."
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    static func chooseSTLExportLocation(suggestedName: String, unitSymbol: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "stl") ?? .data]
+        panel.nameFieldStringValue = "\(suggestedName).stl"
+        panel.canCreateDirectories = true
+        panel.message = "Export visible geometry as binary STL, in \(unitSymbol). STL carries no unit metadata — tell the importing tool (e.g. CST) which unit to use."
         guard panel.runModal() == .OK else { return nil }
         return panel.url
     }

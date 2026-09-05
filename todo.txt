@@ -1,7 +1,1 @@
-- Change the way of definition of primitive to min to max approach
-- Add manual setting of range of createn primitive
-- ADD DELETION OF PREVIOUSLY CREATED definitions
-
-
-
-In far future - write FDTD algorithm in Swift/objc
+- fix the ploting of RL for range of a simulation

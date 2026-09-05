@@ -317,22 +317,40 @@ public final class SceneController {
             portNodes[port.id]?.removeFromParentNode()
 
             let container = SCNNode()
-            container.position = SceneGeometryFactory.vector(port.bounds.center)
 
-            // A port is often a degenerate box (a gap with zero cross-section),
-            // so draw its extent as a wire box plus an explicit direction arrow.
-            let outline = SceneGeometryFactory.makeWireBox(
-                size: port.bounds.size,
-                color: SceneStyle.port
-            )
-            container.addChildNode(outline)
+            if let begin = port.begin, let end = port.end {
+                // A lumped port is a two-terminal element: draw it as a
+                // visibly thick tube (a hairline `.line` primitive is easy to
+                // lose in a real model) with its begin/end terminals marked
+                // in distinct colors, since voltage is measured begin->end.
+                let radius = max(port.gapLength * 0.12, 0.25)
+                container.addChildNode(
+                    SceneGeometryFactory.makeTubeNode(from: begin, to: end, radius: radius, color: SceneStyle.port)
+                )
+                container.addChildNode(
+                    SceneGeometryFactory.makeMarkerNode(at: begin, radius: radius * 2.5, color: SceneStyle.portBegin)
+                )
+                container.addChildNode(
+                    SceneGeometryFactory.makeMarkerNode(at: end, radius: radius * 2.5, color: SceneStyle.portEnd)
+                )
+            } else {
+                container.position = SceneGeometryFactory.vector(port.bounds.center)
+                // A waveguide port has no discrete terminals, just a
+                // cross-section and a propagation direction — keep the wire
+                // box + direction arrow.
+                let outline = SceneGeometryFactory.makeWireBox(
+                    size: port.bounds.size,
+                    color: SceneStyle.port
+                )
+                container.addChildNode(outline)
 
-            let half = port.bounds.span(on: port.direction) / 2
-            let sign: Double = port.isReversed ? -1 : 1
-            let tip = port.direction.unitVector * (half * sign)
-            container.addChildNode(
-                SceneGeometryFactory.makeLineNode(from: tip * -1, to: tip, color: SceneStyle.port)
-            )
+                let half = port.bounds.span(on: port.direction) / 2
+                let sign: Double = port.isReversed ? -1 : 1
+                let tip = port.direction.unitVector * (half * sign)
+                container.addChildNode(
+                    SceneGeometryFactory.makeLineNode(from: tip * -1, to: tip, color: SceneStyle.port)
+                )
+            }
 
             overlayRoot.addChildNode(container)
             portNodes[port.id] = container

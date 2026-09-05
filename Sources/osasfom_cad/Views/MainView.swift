@@ -1,9 +1,11 @@
 import SwiftUI
 import osasfom_cadCore
 import osasfom_cadRender
+import osasfom_cadSolver
 
 struct MainView: View {
     @ObservedObject var document: CADDocument
+    @StateObject private var simulationRunner = SimulationRunner()
 
     @State private var inspectorTab: InspectorTab = .body
     @State private var viewOptions = SceneController.ViewOptions()
@@ -15,6 +17,7 @@ struct MainView: View {
         case body = "Body"
         case simulation = "Simulation"
         case materials = "Materials"
+        case run = "Run"
 
         var id: String { rawValue }
 
@@ -23,6 +26,7 @@ struct MainView: View {
             case .body: return "cube"
             case .simulation: return "waveform.path"
             case .materials: return "paintpalette"
+            case .run: return "play.circle"
             }
         }
     }
@@ -56,7 +60,7 @@ struct MainView: View {
 
     private var workspace: some View {
         VStack(spacing: 0) {
-            ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .top) {
                 SceneViewport(
                     document: document,
                     options: viewOptions,
@@ -64,8 +68,23 @@ struct MainView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                viewOptionsOverlay
-                    .padding(12)
+                HStack {
+                    Spacer()
+                    if let request = document.facePickRequest {
+                        facePickBanner(request)
+                    }
+                    Spacer()
+                }
+                .padding(.top, 12)
+
+                HStack {
+                    Spacer()
+                    viewOptionsOverlay
+                        .padding(12)
+                }
+            }
+            .onExitCommand {
+                if document.facePickRequest != nil { document.facePickRequest = nil }
             }
 
             DiagnosticsBar(
@@ -73,6 +92,22 @@ struct MainView: View {
                 isExpanded: $isShowingDiagnostics
             )
         }
+    }
+
+    private func facePickBanner(_ request: FacePickRequest) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "hand.point.up.left.fill")
+            Text("Click a body's face to set the \(request.terminal == .begin ? "Begin" : "End") terminal")
+                .font(.callout)
+            Button("Cancel") {
+                document.facePickRequest = nil
+            }
+            .buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.thinMaterial, in: Capsule())
+        .shadow(radius: 2)
     }
 
     private var viewOptionsOverlay: some View {
@@ -114,6 +149,8 @@ struct MainView: View {
                 SimulationInspectorView(document: document)
             case .materials:
                 MaterialsInspectorView(document: document)
+            case .run:
+                SimulationRunnerView(document: document, runner: simulationRunner)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -183,6 +220,13 @@ struct MainView: View {
                 Label("Export Solver Deck", systemImage: "square.and.arrow.up")
             }
             .help("Write the resolved, all-SI FDTD setup")
+
+            Button {
+                exportSTL()
+            } label: {
+                Label("Export STL", systemImage: "cube.transparent")
+            }
+            .help("Write visible geometry as STL, for comparison in another EM tool")
         }
     }
 
@@ -195,6 +239,7 @@ struct MainView: View {
         case .save: saveProject(forcingPrompt: false)
         case .saveAs: saveProject(forcingPrompt: true)
         case .exportSolverDeck: exportSolverDeck()
+        case .exportSTL: exportSTL()
         case .zoomToFit: frameRequestToken += 1
         }
     }
@@ -229,6 +274,19 @@ struct MainView: View {
             guard let url = ProjectPanels.chooseSolverExportLocation(
                 suggestedName: document.displayName
             ) else { return }
+            try data.write(to: url, options: .atomic)
+        } catch {
+            alert = AlertContent(title: "Could not export", message: message(for: error))
+        }
+    }
+
+    private func exportSTL() {
+        let data = document.stlExportData()
+        guard let url = ProjectPanels.chooseSTLExportLocation(
+            suggestedName: document.displayName,
+            unitSymbol: document.state.lengthUnit.symbol
+        ) else { return }
+        do {
             try data.write(to: url, options: .atomic)
         } catch {
             alert = AlertContent(title: "Could not export", message: message(for: error))

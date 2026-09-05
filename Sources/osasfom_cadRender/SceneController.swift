@@ -113,7 +113,7 @@ public final class SceneController {
     }
 
     private func update(body: ResolvedBody, material: MaterialDefinition, isSelected: Bool) {
-        let signature = SceneGeometryFactory.signature(for: body.shape)
+        let signature = SceneGeometryFactory.signature(for: body)
         let isZeroThicknessSheet = body.shape.degenerateAxis != nil
         let appearance = Appearance(
             color: material.color,
@@ -139,8 +139,8 @@ public final class SceneController {
         // Rebuilding an SCNGeometry is the expensive part, so only do it when
         // the shape genuinely changed.
         if entry.shapeSignature != signature {
-            entry.geometryNode.geometry = SceneGeometryFactory.makeGeometry(for: body.shape)
-            entry.geometryNode.eulerAngles = SceneGeometryFactory.intrinsicRotation(for: body.shape)
+            entry.geometryNode.geometry = SceneGeometryFactory.makeGeometry(for: body)
+            entry.geometryNode.eulerAngles = SceneGeometryFactory.intrinsicRotation(for: body)
             entry.shapeSignature = signature
             entry.appearance = Appearance(color: .neutralGray, isSelected: false, isDoubleSided: false)
         }
@@ -200,8 +200,8 @@ public final class SceneController {
         node.name = body.id.uuidString
         applyPlacement(placement, to: node)
 
-        let geometryNode = SCNNode(geometry: SceneGeometryFactory.makeGeometry(for: body.shape))
-        geometryNode.eulerAngles = SceneGeometryFactory.intrinsicRotation(for: body.shape)
+        let geometryNode = SCNNode(geometry: SceneGeometryFactory.makeGeometry(for: body))
+        geometryNode.eulerAngles = SceneGeometryFactory.intrinsicRotation(for: body)
         geometryNode.geometry?.materials = [
             SceneGeometryFactory.makeMaterial(
                 color: appearance.color,

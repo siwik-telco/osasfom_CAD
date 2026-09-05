@@ -36,6 +36,10 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable, ExpressionWalk
     /// Making this explicit removes the old reliance on undocumented array order.
     public var priority: Int
     public var isVisible: Bool
+    /// Boolean history applied to `primitive`, in order. Empty for a plain
+    /// primitive, which is why it decodes as absent-means-empty: project
+    /// files written before booleans existed stay readable.
+    public var booleans: [BooleanOperation]
 
     public init(
         id: UUID = UUID(),
@@ -44,7 +48,8 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable, ExpressionWalk
         transform: BodyTransform = BodyTransform(),
         materialID: UUID? = nil,
         priority: Int = 0,
-        isVisible: Bool = true
+        isVisible: Bool = true,
+        booleans: [BooleanOperation] = []
     ) {
         self.id = id
         self.name = name
@@ -53,6 +58,23 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable, ExpressionWalk
         self.materialID = materialID
         self.priority = priority
         self.isVisible = isVisible
+        self.booleans = booleans
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, primitive, transform, materialID, priority, isVisible, booleans
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.name = try container.decode(String.self, forKey: .name)
+        self.primitive = try container.decode(Primitive.self, forKey: .primitive)
+        self.transform = try container.decode(BodyTransform.self, forKey: .transform)
+        self.materialID = try container.decodeIfPresent(UUID.self, forKey: .materialID)
+        self.priority = try container.decode(Int.self, forKey: .priority)
+        self.isVisible = try container.decode(Bool.self, forKey: .isVisible)
+        self.booleans = try container.decodeIfPresent([BooleanOperation].self, forKey: .booleans) ?? []
     }
 
     public var kind: PrimitiveKind { primitive.kind }
@@ -62,6 +84,7 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable, ExpressionWalk
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {
         primitive.walkExpressions(transform)
         self.transform.walkExpressions(transform)
+        for index in booleans.indices { booleans[index].walkExpressions(transform) }
     }
 
     /// A copy with a fresh identity.
@@ -76,7 +99,15 @@ public struct CADBody: Identifiable, Codable, Hashable, Sendable, ExpressionWalk
             transform: transform,
             materialID: materialID,
             priority: priority,
-            isVisible: isVisible
+            isVisible: isVisible,
+            booleans: booleans.map { step in
+                BooleanOperation(
+                    kind: step.kind,
+                    primitive: step.primitive,
+                    transform: step.transform,
+                    isEnabled: step.isEnabled
+                )
+            }
         )
         guard offset != .zero else { return copy }
         copy.transform.position = Vector3Expression(
@@ -142,6 +173,9 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
     /// Index in the document's body list, used as the tie-break for equal
     /// priorities.
     public let orderIndex: Int
+    /// The enabled steps of the body's boolean history, in application order.
+    /// Disabled steps are dropped during resolution, so everything here counts.
+    public let booleans: [ResolvedBooleanOperation]
 
     public init(
         id: UUID,
@@ -153,7 +187,8 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
         materialID: UUID,
         priority: Int,
         isVisible: Bool,
-        orderIndex: Int
+        orderIndex: Int,
+        booleans: [ResolvedBooleanOperation] = []
     ) {
         self.id = id
         self.name = name
@@ -165,6 +200,7 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
         self.priority = priority
         self.isVisible = isVisible
         self.orderIndex = orderIndex
+        self.booleans = booleans
     }
 
     /// True when the rotation is (numerically) a no-op.
@@ -188,6 +224,17 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
     /// back into that wrong box. This is what an FDTD mesher needs to bracket a
     /// body's cells.
     public var axisAlignedBounds: BodyBounds {
+        // An `add` step can put material outside the base primitive, so the
+        // box has to grow to cover it or the mesher would bracket only part
+        // of the body. `subtract` and `trim` can only ever shrink the result,
+        // so leaving them out keeps this a safe superset.
+        booleans
+            .filter { $0.kind == .add }
+            .reduce(baseAxisAlignedBounds) { $0.union($1.axisAlignedBounds) }
+    }
+
+    /// The base primitive's own box, before any boolean step widens it.
+    public var baseAxisAlignedBounds: BodyBounds {
         let halfExtent = scaledSize / 2
         guard !isAxisAligned else {
             return BodyBounds(center: position, size: scaledSize)
@@ -197,6 +244,20 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
             matrix.apply(to: corner) + position
         }
         return BodyBounds.enclosing(points: corners) ?? BodyBounds(center: position, size: .zero)
+    }
+
+    /// Every box the mesher should put grid lines on for this body: the base
+    /// primitive plus each boolean tool. A cut only lands where the numbers
+    /// say if the grid actually has a line on the cut face, so a tool's edges
+    /// are snap-worthy even when the tool itself removes material.
+    public var snapBounds: [BodyBounds] {
+        [baseAxisAlignedBounds] + booleans.map(\.axisAlignedBounds)
+    }
+
+    /// Whether `worldPoint` is inside this body once its boolean history has
+    /// been applied.
+    public func contains(worldPoint: Vec3) -> Bool {
+        ShapeContainment.contains(self, worldPoint: worldPoint)
     }
 
     /// The unrotated local extent box centred on `position`. Meaningful as an
@@ -211,6 +272,10 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
         return .editable
     }
 
+    /// The base primitive's volume. Boolean steps are *not* applied — a
+    /// drilled plate reports as solid — because the analytic volume of a CSG
+    /// result isn't a closed form. Use the mesh from `BodyMesh` if a true
+    /// volume is ever needed.
     public var volume: Double {
         switch shape {
         case .box(let size):

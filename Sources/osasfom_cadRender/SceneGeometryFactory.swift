@@ -12,10 +12,66 @@ public enum SceneGeometryFactory {
     /// incremental updates cheap.
     public struct ShapeSignature: Hashable, Sendable {
         let shape: ResolvedShape
+        /// Booleans are part of the mesh, so a change to any step has to
+        /// invalidate the cached geometry the same way a change to the base
+        /// primitive does.
+        let booleans: [ResolvedBooleanOperation]
     }
 
-    public static func signature(for shape: ResolvedShape) -> ShapeSignature {
-        ShapeSignature(shape: shape)
+    public static func signature(for body: ResolvedBody) -> ShapeSignature {
+        ShapeSignature(shape: body.shape, booleans: body.booleans)
+    }
+
+    /// A body's mesh, with its boolean history applied.
+    ///
+    /// A body without booleans keeps using SceneKit's own parametric
+    /// primitives — they are cheaper, and they carry proper texture
+    /// coordinates. Only a body that is actually cut pays for a custom mesh.
+    public static func makeGeometry(for body: ResolvedBody) -> SCNGeometry {
+        guard usesCustomMesh(body) else { return makeGeometry(for: body.shape) }
+        return makeMeshGeometry(BodyMesh.localTriangles(for: body))
+    }
+
+    /// The intrinsic orientation to apply alongside `makeGeometry(for:)`.
+    /// A CSG mesh is generated in the body's own frame with the primitive's
+    /// axis already baked in, so it must not be turned again.
+    public static func intrinsicRotation(for body: ResolvedBody) -> SCNVector3 {
+        usesCustomMesh(body) ? SCNVector3Zero : intrinsicRotation(for: body.shape)
+    }
+
+    /// A zero-thickness sheet is a surface, so there is no solid for a
+    /// boolean to cut — it keeps its plane, and the resolver warns as much.
+    private static func usesCustomMesh(_ body: ResolvedBody) -> Bool {
+        !body.booleans.isEmpty && body.shape.degenerateAxis == nil
+    }
+
+    /// Flat-shaded geometry from a triangle soup: vertices are emitted
+    /// per-face rather than shared, so each facet keeps its own normal and a
+    /// cut face reads as a crisp edge instead of a smeared one.
+    static func makeMeshGeometry(_ triangles: [STLExporter.Triangle]) -> SCNGeometry {
+        var vertices: [SCNVector3] = []
+        var normals: [SCNVector3] = []
+        vertices.reserveCapacity(triangles.count * 3)
+        normals.reserveCapacity(triangles.count * 3)
+
+        for triangle in triangles {
+            let normal = vector(STLExporter.faceNormal(triangle))
+            for corner in [triangle.v0, triangle.v1, triangle.v2] {
+                vertices.append(vector(corner))
+                normals.append(normal)
+            }
+        }
+
+        guard !vertices.isEmpty else { return SCNGeometry() }
+
+        let element = SCNGeometryElement(
+            indices: Array(UInt32(0)..<UInt32(vertices.count)),
+            primitiveType: .triangles
+        )
+        return SCNGeometry(
+            sources: [SCNGeometrySource(vertices: vertices), SCNGeometrySource(normals: normals)],
+            elements: [element]
+        )
     }
 
     public static func makeGeometry(for shape: ResolvedShape) -> SCNGeometry {

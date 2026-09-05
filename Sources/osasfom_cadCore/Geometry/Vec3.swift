@@ -63,4 +63,33 @@ public struct Vec3: Codable, Hashable, Sendable {
     }
 
     public var isFinite: Bool { x.isFinite && y.isFinite && z.isFinite }
+
+    public func dot(_ other: Vec3) -> Double {
+        x * other.x + y * other.y + z * other.z
+    }
+
+    public func cross(_ other: Vec3) -> Vec3 {
+        Vec3(
+            x: y * other.z - z * other.y,
+            y: z * other.x - x * other.z,
+            z: x * other.y - y * other.x
+        )
+    }
+
+    public var length: Double { dot(self).squareRoot() }
+
+    /// The unit vector in the same direction, or `nil` for a zero-length
+    /// vector — returning an optional rather than silently handing back
+    /// garbage, since a degenerate face normal is a real condition callers
+    /// have to decide about.
+    public var normalized: Vec3? {
+        let magnitude = length
+        guard magnitude > 0 else { return nil }
+        return self / magnitude
+    }
+
+    /// Linear interpolation, used when a plane splits an edge.
+    public func interpolated(to other: Vec3, by t: Double) -> Vec3 {
+        self + (other - self) * t
+    }
 }

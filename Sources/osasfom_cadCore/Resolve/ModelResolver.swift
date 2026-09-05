@@ -75,20 +75,33 @@ public enum ModelResolver {
         var diagnostics: [Diagnostic]
     }
 
-    private static func resolveBody(
-        _ body: CADBody,
-        orderIndex: Int,
-        variables: [String: Double]
-    ) -> BodyOutcome {
-        var diagnostics: [Diagnostic] = []
-        let subject = Diagnostic.Subject.body(body.id)
+    /// A primitive plus its transform, both evaluated.
+    ///
+    /// Shared by a body's own shape and by each of its boolean tools, so a
+    /// tool is placed by exactly the same rules a body is — including the
+    /// begin/end overrides that make a box's, a cylinder's and a sheet's
+    /// coordinates absolute rather than centred on Position.
+    private struct PlacedShape {
+        var shape: ResolvedShape
+        var position: Vec3
+        var rotationDegrees: Vec3
+        var scale: Vec3
+    }
 
+    private static func resolvePlacement(
+        primitive: Primitive,
+        transform: BodyTransform,
+        variables: [String: Double],
+        subject: Diagnostic.Subject,
+        fieldPrefix: String,
+        diagnostics: inout [Diagnostic]
+    ) -> PlacedShape? {
         func scalar(_ expression: Expression, field: String) -> Double? {
             do {
                 return try expression.value(variables: variables)
             } catch {
                 let message = (error as? ExpressionError)?.description ?? "Invalid expression."
-                diagnostics.append(.error(subject, field: field, message))
+                diagnostics.append(.error(subject, field: fieldPrefix + field, message))
                 return nil
             }
         }
@@ -101,6 +114,10 @@ public enum ModelResolver {
             return Vec3(x: x, y: y, z: z)
         }
 
+        func error(_ field: String, _ message: String) {
+            diagnostics.append(.error(subject, field: fieldPrefix + field, message))
+        }
+
         let shape: ResolvedShape?
         /// A box's begin/end are absolute on every axis, so (unlike every
         /// other primitive) its resolved position doesn't come from
@@ -111,7 +128,7 @@ public enum ModelResolver {
         /// other two still take their center from transform.position.
         var sheetNormalOverride: (axis: Axis, center: Double)?
 
-        switch body.primitive {
+        switch primitive {
         case .box(let spec):
             var boxBegin = Vec3.zero
             var boxEnd = Vec3.zero
@@ -127,12 +144,9 @@ public enum ModelResolver {
                 boxBegin[axis] = beginValue
                 boxEnd[axis] = endValue
                 if beginValue == endValue {
-                    diagnostics.append(
-                        .error(
-                            subject,
-                            field: "primitive.end\(axis.displayName)",
-                            "Begin and end must differ along \(axis.displayName); a zero-extent box has no volume."
-                        )
+                    error(
+                        "primitive.end\(axis.displayName)",
+                        "Begin and end must differ along \(axis.displayName); a zero-extent box has no volume."
                     )
                 }
             }
@@ -142,10 +156,9 @@ public enum ModelResolver {
                     y: abs(boxEnd.y - boxBegin.y),
                     z: abs(boxEnd.z - boxBegin.z)
                 )
-                shape = size.components.allSatisfy { $0 > 0 }
-                    ? .box(size: size)
-                    : nil
-                boxCenterOverride = size.components.allSatisfy { $0 > 0 }
+                let isValid = size.components.allSatisfy { $0 > 0 }
+                shape = isValid ? .box(size: size) : nil
+                boxCenterOverride = isValid
                     ? Vec3(x: (boxBegin.x + boxEnd.x) / 2, y: (boxBegin.y + boxEnd.y) / 2, z: (boxBegin.z + boxEnd.z) / 2)
                     : nil
             } else {
@@ -158,14 +171,10 @@ public enum ModelResolver {
             let end = scalar(spec.end, field: "primitive.end")
             if let radius, let begin, let end {
                 if radius <= 0 {
-                    diagnostics.append(
-                        .error(subject, field: "primitive.radius", "Radius must be greater than zero (got \(Expression.literalSource(radius))).")
-                    )
+                    error("primitive.radius", "Radius must be greater than zero (got \(Expression.literalSource(radius))).")
                 }
                 if begin == end {
-                    diagnostics.append(
-                        .error(subject, field: "primitive.end", "Begin and end must differ along \(spec.axis.displayName); a zero-length cylinder has no volume.")
-                    )
+                    error("primitive.end", "Begin and end must differ along \(spec.axis.displayName); a zero-length cylinder has no volume.")
                 }
                 shape = radius > 0 && begin != end
                     ? .cylinder(radius: radius, begin: begin, end: end, axis: spec.axis)
@@ -188,14 +197,10 @@ public enum ModelResolver {
                 size[spec.normal] = thickness
 
                 if width <= 0 {
-                    diagnostics.append(
-                        .error(subject, field: "primitive.width", "Width must be greater than zero.")
-                    )
+                    error("primitive.width", "Width must be greater than zero.")
                 }
                 if depth <= 0 {
-                    diagnostics.append(
-                        .error(subject, field: "primitive.depth", "Depth must be greater than zero.")
-                    )
+                    error("primitive.depth", "Depth must be greater than zero.")
                 }
                 // begin == end is legal here: an infinitely thin PEC sheet is a
                 // standard FDTD construct.
@@ -210,9 +215,9 @@ public enum ModelResolver {
             }
         }
 
-        var position = vector(body.transform.position, field: "transform.position")
-        let rotation = vector(body.transform.rotationDegrees, field: "transform.rotation")
-        let scale = vector(body.transform.scale, field: "transform.scale")
+        var position = vector(transform.position, field: "transform.position")
+        let rotation = vector(transform.rotationDegrees, field: "transform.rotation")
+        let scale = vector(transform.scale, field: "transform.scale")
 
         // A cylinder's begin/end are absolute coordinates along its axis, not
         // an extent centred on the body's position — so its resolved position
@@ -233,9 +238,7 @@ public enum ModelResolver {
         }
 
         if let scale, scale.components.contains(where: { $0 == 0 }) {
-            diagnostics.append(
-                .error(subject, field: "transform.scale", "Scale components cannot be zero.")
-            )
+            error("transform.scale", "Scale components cannot be zero.")
         }
 
         guard
@@ -245,10 +248,61 @@ public enum ModelResolver {
             let scale,
             !scale.components.contains(where: { $0 == 0 })
         else {
+            return nil
+        }
+
+        return PlacedShape(shape: shape, position: position, rotationDegrees: rotation, scale: scale)
+    }
+
+    private static func resolveBody(
+        _ body: CADBody,
+        orderIndex: Int,
+        variables: [String: Double]
+    ) -> BodyOutcome {
+        var diagnostics: [Diagnostic] = []
+        let subject = Diagnostic.Subject.body(body.id)
+
+        let base = resolvePlacement(
+            primitive: body.primitive,
+            transform: body.transform,
+            variables: variables,
+            subject: subject,
+            fieldPrefix: "",
+            diagnostics: &diagnostics
+        )
+
+        // Disabled steps are dropped here rather than carried into the
+        // resolved model, so everything downstream can take the list at face
+        // value. Their expressions are still resolved, so a typo in a
+        // switched-off step is still reported instead of lying in wait.
+        var booleans: [ResolvedBooleanOperation] = []
+        for (index, step) in body.booleans.enumerated() {
+            let placed = resolvePlacement(
+                primitive: step.primitive,
+                transform: step.transform,
+                variables: variables,
+                subject: subject,
+                fieldPrefix: "booleans[\(index)].",
+                diagnostics: &diagnostics
+            )
+            guard step.isEnabled, let placed else { continue }
+            booleans.append(
+                ResolvedBooleanOperation(
+                    id: step.id,
+                    kind: step.kind,
+                    shape: placed.shape,
+                    position: placed.position,
+                    rotationDegrees: placed.rotationDegrees,
+                    scale: placed.scale
+                )
+            )
+        }
+
+        guard let base else {
             return BodyOutcome(body: nil, diagnostics: diagnostics)
         }
 
-        if shape.kind == .sheet, let degenerate = shape.degenerateAxis {
+        if base.shape.kind == .sheet, let degenerate = base.shape.degenerateAxis {
             diagnostics.append(
                 .warning(
                     subject,
@@ -256,19 +310,29 @@ public enum ModelResolver {
                     "Zero-thickness sheet: it will be meshed as a surface on the \(degenerate.displayName)-normal plane."
                 )
             )
+            if !booleans.isEmpty {
+                diagnostics.append(
+                    .warning(
+                        subject,
+                        field: "booleans",
+                        "A zero-thickness sheet has no volume to cut, so the viewport and STL export draw it whole. The solver still applies these steps to the surface itself."
+                    )
+                )
+            }
         }
 
         let resolved = ResolvedBody(
             id: body.id,
             name: body.name,
-            shape: shape,
-            position: position,
-            rotationDegrees: rotation,
-            scale: scale,
+            shape: base.shape,
+            position: base.position,
+            rotationDegrees: base.rotationDegrees,
+            scale: base.scale,
             materialID: body.effectiveMaterialID,
             priority: body.priority,
             isVisible: body.isVisible,
-            orderIndex: orderIndex
+            orderIndex: orderIndex,
+            booleans: booleans
         )
         return BodyOutcome(body: resolved, diagnostics: diagnostics)
     }

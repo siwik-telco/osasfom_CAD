@@ -19,6 +19,13 @@ struct BodyInspectorView: View {
             Form {
                 identitySection(model)
                 dimensionsSection(model)
+                BooleanOperationsSection(
+                    document: document,
+                    bodyID: bodyID,
+                    model: model,
+                    variables: variables,
+                    unitSymbol: unit
+                )
                 transformSection
                 extentsSection
                 materialSection(model)
@@ -65,121 +72,22 @@ struct BodyInspectorView: View {
         }
     }
 
-    @ViewBuilder
     private func dimensionsSection(_ model: CADBody) -> some View {
         Section {
-            switch model.primitive {
-            case .box:
-                ForEach(Axis.allCases) { axis in
-                    ExpressionRow(
-                        label: "Begin (\(axis.displayName))",
-                        expression: boxAxisBinding(axis, isBegin: true),
-                        variables: variables,
-                        unitSymbol: unit,
-                        help: axis == .x
-                            ? "Absolute coordinate of the box's face on this axis. Position is unused for a box — set extents here instead."
-                            : nil
-                    )
-                    ExpressionRow(
-                        label: "End (\(axis.displayName))",
-                        expression: boxAxisBinding(axis, isBegin: false),
-                        variables: variables,
-                        unitSymbol: unit
-                    )
-                }
-
-            case .cylinder(let spec):
-                ExpressionRow(
-                    label: "Radius",
-                    expression: cylinderBinding(\.radius, field: "radius"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-                Picker(
-                    "Axis",
-                    selection: Binding(
-                        get: { spec.axis },
-                        set: { newAxis in
-                            document.updateBody(bodyID, actionName: "Change Cylinder Axis") { body in
-                                body.primitive.updateCylinder { $0.axis = newAxis }
-                            }
-                        }
-                    )
-                ) {
-                    ForEach(Axis.allCases) { axis in
-                        Text(axis.displayName).tag(axis)
+            PrimitiveFieldsView(
+                primitive: model.primitive,
+                variables: variables,
+                unitSymbol: unit,
+                edit: { field, actionName, mutation in
+                    document.updateBody(
+                        bodyID,
+                        actionName: actionName,
+                        coalescingKey: "body.\(bodyID.uuidString).\(field)"
+                    ) { body in
+                        mutation(&body.primitive)
                     }
                 }
-                .pickerStyle(.segmented)
-                ExpressionRow(
-                    label: "Begin (\(spec.axis.displayName))",
-                    expression: cylinderBinding(\.begin, field: "begin"),
-                    variables: variables,
-                    unitSymbol: unit,
-                    help: "Absolute coordinate of the first terminal along \(spec.axis.displayName). Position \(spec.axis.displayName) is unused for a cylinder — set the extent here instead."
-                )
-                ExpressionRow(
-                    label: "End (\(spec.axis.displayName))",
-                    expression: cylinderBinding(\.end, field: "end"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-
-            case .sheet(let spec):
-                Picker(
-                    "Normal",
-                    selection: Binding(
-                        get: { spec.normal },
-                        set: { newNormal in
-                            document.updateBody(bodyID, actionName: "Change Sheet Normal") { body in
-                                body.primitive.updateSheet { $0.normal = newNormal }
-                            }
-                        }
-                    )
-                ) {
-                    ForEach(Axis.allCases) { axis in
-                        Text(axis.displayName).tag(axis)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                ExpressionRow(
-                    label: "Width (\(spec.normal.perpendicular.0.displayName))",
-                    expression: sheetBinding(\.width, field: "width"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-                ExpressionRow(
-                    label: "Depth (\(spec.normal.perpendicular.1.displayName))",
-                    expression: sheetBinding(\.depth, field: "depth"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-                ExpressionRow(
-                    label: "Begin (\(spec.normal.displayName))",
-                    expression: sheetBinding(\.begin, field: "begin"),
-                    variables: variables,
-                    unitSymbol: unit,
-                    help: "Absolute coordinate of the first face along \(spec.normal.displayName). Position \(spec.normal.displayName) is unused for a sheet — set the extent here instead. Equal begin/end is allowed and means an infinitely thin sheet."
-                )
-                ExpressionRow(
-                    label: "End (\(spec.normal.displayName))",
-                    expression: sheetBinding(\.end, field: "end"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-
-                if let begin = try? spec.begin.value(variables: variables),
-                   let end = try? spec.end.value(variables: variables),
-                   begin == end {
-                    Label(
-                        "Zero-thickness sheet — meshed as a surface. Ideal for a PEC patch or ground plane.",
-                        systemImage: "info.circle"
-                    )
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
+            )
         } header: {
             Text("Dimensions")
         } footer: {
@@ -377,63 +285,6 @@ struct BodyInspectorView: View {
     }
 
     // MARK: - Bindings
-
-    private func boxAxisBinding(_ axis: Axis, isBegin: Bool) -> Binding<Expression> {
-        let field = "\(isBegin ? "begin" : "end")\(axis.displayName)"
-        return Binding(
-            get: {
-                guard let spec = self.body_?.primitive.boxSpec else { return .unset }
-                return isBegin ? spec.begin(axis) : spec.end(axis)
-            },
-            set: { newValue in
-                document.updateBody(
-                    bodyID,
-                    actionName: "Edit Dimension",
-                    coalescingKey: "body.\(bodyID.uuidString).\(field)"
-                ) { body in
-                    body.primitive.updateBox { spec in
-                        if isBegin { spec.setBegin(axis, newValue) } else { spec.setEnd(axis, newValue) }
-                    }
-                }
-            }
-        )
-    }
-
-    private func cylinderBinding(
-        _ keyPath: WritableKeyPath<CylinderSpec, Expression>,
-        field: String
-    ) -> Binding<Expression> {
-        Binding(
-            get: { self.body_?.primitive.cylinderSpec?[keyPath: keyPath] ?? .unset },
-            set: { newValue in
-                document.updateBody(
-                    bodyID,
-                    actionName: "Edit Dimension",
-                    coalescingKey: "body.\(bodyID.uuidString).\(field)"
-                ) { body in
-                    body.primitive.updateCylinder { $0[keyPath: keyPath] = newValue }
-                }
-            }
-        )
-    }
-
-    private func sheetBinding(
-        _ keyPath: WritableKeyPath<SheetSpec, Expression>,
-        field: String
-    ) -> Binding<Expression> {
-        Binding(
-            get: { self.body_?.primitive.sheetSpec?[keyPath: keyPath] ?? .unset },
-            set: { newValue in
-                document.updateBody(
-                    bodyID,
-                    actionName: "Edit Dimension",
-                    coalescingKey: "body.\(bodyID.uuidString).\(field)"
-                ) { body in
-                    body.primitive.updateSheet { $0[keyPath: keyPath] = newValue }
-                }
-            }
-        )
-    }
 
     private func transformBinding(
         _ keyPath: WritableKeyPath<BodyTransform, Expression>,

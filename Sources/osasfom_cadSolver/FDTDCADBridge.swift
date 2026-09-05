@@ -66,9 +66,15 @@ public enum GridMesher {
             fixed.insert(domain.maximum[axis])
 
             if setup.mesh.snapToBodyEdges {
+                // `snapBounds` is the body plus each of its boolean tools: a
+                // cut only lands where the numbers say if the grid has a line
+                // on the cut face, so a tool's edges are snap-worthy even
+                // though the tool removes material rather than adding it.
                 for body in resolved.bodies where body.isVisible {
-                    fixed.insert(body.axisAlignedBounds.minimum[axis])
-                    fixed.insert(body.axisAlignedBounds.maximum[axis])
+                    for bounds in body.snapBounds {
+                        fixed.insert(bounds.minimum[axis])
+                        fixed.insert(bounds.maximum[axis])
+                    }
                 }
             }
             for port in resolved.simulation.ports {
@@ -248,66 +254,14 @@ public final class CADMaterialProvider: MaterialProvider {
     /// Test punktu względem bryły w jej lokalnym układzie (odwraca
     /// translację/rotację/skalę), z dokładnym testem kształtu zamiast tylko
     /// axisAlignedBounds - istotne dla obróconych brył.
-    /// A point placed exactly on a body's own declared edge — the normal
-    /// case for a port meant to sit flush with a board edge or layer
-    /// boundary — can come out a few ULPs outside that edge once it has
-    /// passed through center/half-extent subtraction (e.g. `-lg/2` and
-    /// `-l/2` combining to a half-extent that's off by ~1e-15 from the
-    /// point's own coordinate). A bare `<=` then silently drops the body
-    /// that was actually meant to own that point, in favor of whatever is
-    /// underneath. `tolerance` absorbs that, in the same project units used
-    /// elsewhere in this comparison (mirrors `BodyBounds.contains`).
-    private static let containsTolerance = 1e-9
-
+    /// Point-in-body, delegated to `ShapeContainment` so the solver and the
+    /// viewport can never disagree about what the model is — including a
+    /// body's boolean history, which is applied there analytically rather
+    /// than sampled off a mesh.
     private func contains(_ body: ResolvedBody, point: Vec3) -> Bool {
-        // Szybkie odrzucenie przez AABB przed dokładniejszym testem.
+        // Cheap axis-aligned reject first; the exact test is the authority.
         guard body.axisAlignedBounds.contains(point) else { return false }
-
-        let local = toLocal(point, position: body.position, rotationDegrees: body.rotationDegrees, scale: body.scale)
-        let tol = Self.containsTolerance
-
-        switch body.shape {
-        case .box(let size):
-            return abs(local.x) <= size.x / 2 + tol && abs(local.y) <= size.y / 2 + tol && abs(local.z) <= size.z / 2 + tol
-        case .sheet(let size, _):
-            // Kwestia grubości zerowej: traktujemy jak cienki plaster o
-            // szerokości jednej komórki (mesher i tak stawia tam linię
-            // graniczną dzięki snapToBodyEdges).
-            return abs(local.x) <= max(size.x, 0) / 2 + tol
-                && abs(local.y) <= max(size.y, 0) / 2 + tol
-                && abs(local.z) <= max(size.z, 0) / 2 + tol
-        case .cylinder(let radius, let begin, let end, let axis):
-            let length = abs(end - begin)
-            switch axis {
-            case .x:
-                return abs(local.x) <= length / 2 + tol && (local.y * local.y + local.z * local.z) <= (radius + tol) * (radius + tol)
-            case .y:
-                return abs(local.y) <= length / 2 + tol && (local.x * local.x + local.z * local.z) <= (radius + tol) * (radius + tol)
-            case .z:
-                return abs(local.z) <= length / 2 + tol && (local.x * local.x + local.y * local.y) <= (radius + tol) * (radius + tol)
-            }
-        }
-    }
-
-    private func toLocal(_ point: Vec3, position: Vec3, rotationDegrees: Vec3, scale: Vec3) -> Vec3 {
-        var p = Vec3(x: point.x - position.x, y: point.y - position.y, z: point.z - position.z)
-        // Odwrotna rotacja: extrinsic XYZ degrees, Z then Y then X (patrz
-        // SolverExport.Meta.rotationConvention) -> odwracamy w kolejności X,Y,Z.
-        p = rotate(p, axis: .x, degrees: -rotationDegrees.x)
-        p = rotate(p, axis: .y, degrees: -rotationDegrees.y)
-        p = rotate(p, axis: .z, degrees: -rotationDegrees.z)
-        return Vec3(x: p.x / scale.x, y: p.y / scale.y, z: p.z / scale.z)
-    }
-
-    private func rotate(_ v: Vec3, axis: Axis, degrees: Double) -> Vec3 {
-        guard degrees != 0 else { return v }
-        let r = degrees * .pi / 180
-        let c = cos(r), s = sin(r)
-        switch axis {
-        case .x: return Vec3(x: v.x, y: v.y * c - v.z * s, z: v.y * s + v.z * c)
-        case .y: return Vec3(x: v.x * c + v.z * s, y: v.y, z: -v.x * s + v.z * c)
-        case .z: return Vec3(x: v.x * c - v.y * s, y: v.x * s + v.y * c, z: v.z)
-        }
+        return ShapeContainment.contains(body, worldPoint: point)
     }
 }
 

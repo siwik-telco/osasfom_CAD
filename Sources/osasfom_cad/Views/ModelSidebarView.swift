@@ -101,6 +101,13 @@ private struct BodyRow: View {
                 .lineLimit(1)
                 .foregroundStyle(model.isVisible ? .primary : .secondary)
 
+            if !model.booleans.isEmpty {
+                Image(systemName: "square.on.square.dashed")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .help("\(model.booleans.count) boolean step(s)")
+            }
+
             Spacer(minLength: 4)
 
             if let severity {

@@ -217,6 +217,57 @@ public final class CADDocument: ObservableObject {
         }
     }
 
+    // MARK: - Boolean operations
+
+    /// Appends a boolean step to a body. The tool starts as a default
+    /// primitive of `primitiveKind`, which the inspector then edits in place —
+    /// same as a freshly added body.
+    @discardableResult
+    public func addBooleanOperation(
+        to bodyID: UUID,
+        kind: BooleanKind,
+        primitiveKind: PrimitiveKind
+    ) -> UUID {
+        let operation = BooleanOperation.make(kind: kind, primitiveKind: primitiveKind)
+        updateBody(bodyID, actionName: "\(kind.displayName) \(primitiveKind.displayName)") { body in
+            body.booleans.append(operation)
+        }
+        return operation.id
+    }
+
+    public func updateBooleanOperation(
+        _ operationID: UUID,
+        on bodyID: UUID,
+        actionName: String,
+        coalescingKey: String? = nil,
+        _ mutation: (inout BooleanOperation) -> Void
+    ) {
+        updateBody(bodyID, actionName: actionName, coalescingKey: coalescingKey) { body in
+            guard let index = body.booleans.firstIndex(where: { $0.id == operationID }) else { return }
+            mutation(&body.booleans[index])
+        }
+    }
+
+    public func deleteBooleanOperation(_ operationID: UUID, from bodyID: UUID) {
+        guard
+            let body = state.body(id: bodyID),
+            let operation = body.booleans.first(where: { $0.id == operationID })
+        else { return }
+
+        updateBody(bodyID, actionName: "Delete \(operation.kind.displayName)") { body in
+            body.booleans.removeAll { $0.id == operationID }
+        }
+    }
+
+    /// Steps apply in order, so moving one is a modelling operation rather
+    /// than cosmetic reordering: a subtract before an add is a different
+    /// solid than the same two the other way round.
+    public func moveBooleanOperations(on bodyID: UUID, fromOffsets source: IndexSet, toOffset destination: Int) {
+        updateBody(bodyID, actionName: "Reorder Boolean Steps") { body in
+            body.booleans.moveElements(fromOffsets: source, toOffset: destination)
+        }
+    }
+
     // MARK: - Variables
 
     @discardableResult

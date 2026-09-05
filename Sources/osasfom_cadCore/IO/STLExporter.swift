@@ -19,21 +19,9 @@ public enum STLExporter {
     /// `segments` controls how finely a cylinder's round cross-section is
     /// tessellated.
     public static func triangles(for bodies: [ResolvedBody], segments: Int = 32) -> [Triangle] {
-        var result: [Triangle] = []
-        for body in bodies where body.isVisible {
-            let local = localTriangles(for: body.shape, segments: segments)
-            let matrix = body.rotationMatrix
-            for triangle in local {
-                result.append(
-                    Triangle(
-                        v0: matrix.apply(to: triangle.v0.scaled(by: body.scale)) + body.position,
-                        v1: matrix.apply(to: triangle.v1.scaled(by: body.scale)) + body.position,
-                        v2: matrix.apply(to: triangle.v2.scaled(by: body.scale)) + body.position
-                    )
-                )
-            }
-        }
-        return result
+        bodies
+            .filter(\.isVisible)
+            .flatMap { BodyMesh.worldTriangles(for: $0, segments: segments) }
     }
 
     public static func encode(resolved: ResolvedModel, segments: Int = 32) -> Data {
@@ -69,7 +57,7 @@ public enum STLExporter {
     /// computed from the actual transformed vertices rather than carried
     /// through from local space, so it comes out correct regardless of any
     /// rotation or (mirroring) negative scale applied to the body.
-    static func faceNormal(_ t: Triangle) -> Vec3 {
+    public static func faceNormal(_ t: Triangle) -> Vec3 {
         let e1 = t.v1 - t.v0
         let e2 = t.v2 - t.v0
         let n = Vec3(

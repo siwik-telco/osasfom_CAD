@@ -102,6 +102,17 @@ public struct SolverExport: Encodable, Sendable {
         public let isZeroThickness: Bool?
     }
 
+    /// One step of a body's boolean history, in the order it applies.
+    public struct BooleanRecord: Encodable, Sendable {
+        /// `add`, `subtract` or `trim` (intersection).
+        public let operation: String
+        public let shape: ShapeRecord
+        public let positionMeters: VectorRecord
+        public let rotationDegrees: VectorRecord
+        public let scale: VectorRecord
+        public let axisAlignedBoundsMeters: BoxRecord
+    }
+
     public struct BodyRecord: Encodable, Sendable {
         public let id: String
         public let name: String
@@ -115,6 +126,10 @@ public struct SolverExport: Encodable, Sendable {
         /// Precomputed so a mesher does not have to redo the rotated-corner
         /// transform to bracket the body's cells.
         public let axisAlignedBoundsMeters: BoxRecord
+        /// Applied to `shape` in order. Empty for a plain primitive — but a
+        /// reader that ignores this array will voxelise a drilled plate as a
+        /// solid one, so it is not optional to honour.
+        public let booleans: [BooleanRecord]
     }
 
     public struct BoundaryRecord: Encodable, Sendable {
@@ -288,7 +303,17 @@ public enum SolverExportEncoder {
                 positionMeters: SolverExport.VectorRecord(unit.toMeters(body.position)),
                 rotationDegrees: SolverExport.VectorRecord(body.rotationDegrees),
                 scale: SolverExport.VectorRecord(body.scale),
-                axisAlignedBoundsMeters: SolverExport.BoxRecord(body.axisAlignedBounds, unit: unit)
+                axisAlignedBoundsMeters: SolverExport.BoxRecord(body.axisAlignedBounds, unit: unit),
+                booleans: body.booleans.map { step in
+                    SolverExport.BooleanRecord(
+                        operation: step.kind.rawValue,
+                        shape: shapeRecord(for: step.shape, unit: unit),
+                        positionMeters: SolverExport.VectorRecord(unit.toMeters(step.position)),
+                        rotationDegrees: SolverExport.VectorRecord(step.rotationDegrees),
+                        scale: SolverExport.VectorRecord(step.scale),
+                        axisAlignedBoundsMeters: SolverExport.BoxRecord(step.axisAlignedBounds, unit: unit)
+                    )
+                }
             )
         }
 

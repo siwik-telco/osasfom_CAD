@@ -119,19 +119,30 @@ field array nothing else touches during that phase (the standard leapfrog
 property). Two things had to be fixed to make this actually pay off, both
 confirmed by direct benchmark, not just theory:
 
-- Dispatching one task per X-plane (as small grids only have a few dozen)
-  cost more in scheduling overhead than it saved — fixed by chunking into
-  core-sized batches instead of one dispatch per plane.
+- Dispatching one task per X-plane (small grids only have a few dozen) cost
+  more in scheduling overhead than it saved — a ~16k-cell run went **3.7x
+  slower** while burning 9x the CPU. Fixed by chunking into core-sized
+  batches so dispatch cost is O(cores), not O(numX).
 - Even chunked, it was *still* slower than sequential, because field storage
   was a Swift `Array`, whose copy-on-write bookkeeping causes cross-core
   cache-line contention on every access — even to disjoint indices. Fixed by
   switching to raw `UnsafeMutablePointer` storage.
+- The cell-count threshold guarding the parallel path was then left at the
+  value calibrated against that *broken* implementation (400k cells). Since a
+  2.4 GHz dipole meshes to roughly 2k–30k cells, nothing ever crossed it and
+  every real run silently stayed single-core. Re-measured and lowered to 1k;
+  it now exists only to skip degenerate grids.
 
-Net result, on a 512k-cell synthetic grid: **5.6x speedup** (1.76s → 0.31s
-for 20 timesteps), and the sequential path itself got roughly 2x faster too
-as a side effect of dropping the `Array` overhead. Below a cell-count
-threshold, the plain sequential loop still wins and is used automatically —
-parallelizing everything unconditionally was the original mistake.
+Measured speedup on a 16-thread machine, once all three were fixed: 2.0x at
+768 cells, 5.0x at 16k, 6.8x at 512k. End to end, the dipole regression test
+went from **67s → 5.9s**. Field values are bit-identical between the parallel
+and sequential paths, which `ParallelismEngagementTests` asserts along with
+the threshold staying low enough to actually engage.
+
+Storage is also component-interleaved (a cell's x/y/z components adjacent
+rather than in separate planes as openEMS does it), worth a further ~4% —
+small, because the kernels are dominated by the curl's strided neighbour
+reads rather than the three-component read.
 
 ## Modelling
 

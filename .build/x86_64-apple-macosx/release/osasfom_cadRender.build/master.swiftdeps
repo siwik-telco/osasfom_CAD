@@ -1,8 +1,0 @@
-version: "Apple Swift version 5.9.2 (swiftlang-5.9.2.2.56 clang-1500.1.0.2.5)"
-options: "219a8e3a544b999b4496750b34e597da7ec2b60dd361d811e741586c8dfeb762"
-build_start_time: [1788555027, 440370000]
-build_end_time: [1788555030, 532671000]
-inputs:
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadRender/SceneColors.swift": [1786823069, 726990601]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadRender/SceneController.swift": [1788542042, 676370177]
-  "/Users/barteksiwik/Desktop/osasfom_cad/Sources/osasfom_cadRender/SceneGeometryFactory.swift": [1788542061, 115439939]

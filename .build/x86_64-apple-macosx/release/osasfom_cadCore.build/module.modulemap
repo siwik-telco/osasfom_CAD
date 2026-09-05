@@ -1,4 +1,0 @@
-module osasfom_cadCore {
-    header "/Users/barteksiwik/Desktop/osasfom_cad/.build/x86_64-apple-macosx/release/osasfom_cadCore.build/osasfom_cadCore-Swift.h"
-    requires objc
-}

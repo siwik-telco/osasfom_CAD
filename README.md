@@ -54,9 +54,9 @@ command-line mesher or solver harness and is fully unit-testable.
 `osasfom_cadSolver` is a real, buildable, tested target: a Swift port of
 openEMS's Yee-grid `Engine`/`Operator` core, plus a bridge
 (`GridMesher`, `CADMaterialProvider`, `SimulationRunner`) that meshes a
-`ResolvedModel`, drives the engine, and extracts S11 from an excited lumped
-port. `SimulationRunner.run(document:)` is the entry point; it is not yet
-wired into the app's UI, only into the library graph.
+`ResolvedModel` and drives the engine. It is wired all the way into the app:
+the inspector's **Run** tab starts and stops a simulation, shows live
+progress and grid size, and plots the result.
 
 It has one working, tested capability end to end: **return loss of a
 lumped-port antenna** (`osasfom_cadSolverTests/DipoleReturnLossTests.swift`
@@ -76,12 +76,62 @@ physically-valid resonance dip in the S11 sweep). Beyond that:
 - The port-current extraction and the resistive stamp are exact only when
   the feed gap spans exactly one Yee edge, which is guaranteed by
   `GridMesher` always placing a fixed grid line at each port terminal.
+- **Before spending minutes on a run**, it checks that every excited lumped
+  port's terminals actually touch a conductor. Without that, the port's
+  resistor sits alone in free space, perfectly matched to its own reference
+  impedance — S11 comes out flat and near 0 dB at every frequency, a result
+  that looks like a solver bug but is really just an unconnected port. The
+  run refuses immediately instead of computing that silently.
 - Everything else a full antenna solver needs — waveguide ports,
   near-to-far-field transform, multi-port S-parameters, adaptive
   time-stepping/frequency-domain features — is not implemented.
 
 Being a derivative of GPLv3-licensed openEMS code, `osasfom_cadSolver` is
 GPLv3 (see `LICENSE`).
+
+#### Running a simulation
+
+The **Run** tab (inspector) drives everything:
+
+- **Run / Stop.** Stopping doesn't discard the work in progress: the DFT
+  integrates over whatever time series was recorded so far, so a stopped run
+  still yields a (less converged, clearly flagged) spectrum instead of
+  nothing — useful for an early look at where a resonance is heading.
+- **Plot range.** The S11 chart can be rescoped to a sub-band of what was
+  actually simulated, recomputed instantly from the already-recorded time
+  series — no re-run needed, since the DFT can be evaluated at any frequency
+  after the fact. Any requested range is clamped to the band that was
+  actually excited, so you can never end up looking at frequencies with no
+  real excitation energy behind them.
+- **Run history.** Every completed run this session is kept, tied to the
+  variable values that produced it. Selecting a past run shows its S11 curve
+  and its full variable snapshot — any variable that has since changed in
+  the live document is highlighted, old value → new, so a result never
+  quietly goes stale without you noticing. History is session-only — it is
+  not written to the project file, so it resets when the app relaunches.
+
+#### Multicore
+
+The per-timestep field updates (`Engine.updateVoltages`/`updateCurrents`)
+are parallelized across X-plane chunks via `DispatchQueue.concurrentPerform`
+— safe because each phase only *writes* its own plane while *reading* a
+field array nothing else touches during that phase (the standard leapfrog
+property). Two things had to be fixed to make this actually pay off, both
+confirmed by direct benchmark, not just theory:
+
+- Dispatching one task per X-plane (as small grids only have a few dozen)
+  cost more in scheduling overhead than it saved — fixed by chunking into
+  core-sized batches instead of one dispatch per plane.
+- Even chunked, it was *still* slower than sequential, because field storage
+  was a Swift `Array`, whose copy-on-write bookkeeping causes cross-core
+  cache-line contention on every access — even to disjoint indices. Fixed by
+  switching to raw `UnsafeMutablePointer` storage.
+
+Net result, on a 512k-cell synthetic grid: **5.6x speedup** (1.76s → 0.31s
+for 20 timesteps), and the sequential path itself got roughly 2x faster too
+as a side effect of dropping the `Array` overhead. Below a cell-count
+threshold, the plain sequential loop still wins and is used automatically —
+parallelizing everything unconditionally was the original mistake.
 
 ## Modelling
 
@@ -170,6 +220,12 @@ block.
 Projects written by the original prototype (format 1) are imported
 automatically; its name-based variable bindings become real expressions.
 
+**STL export** (File → Export STL…, ⇧⌘E) writes every visible body's surface
+as binary STL, in the project's own length unit — for cross-checking this
+model's geometry against another EM tool (e.g. CST) that can import STL.
+STL carries no unit metadata, so the export dialog says explicitly which
+unit to tell the importing tool to use.
+
 ## Editing behaviour worth knowing
 
 - **The camera never moves on its own.** The scene is reconciled incrementally,
@@ -187,6 +243,17 @@ automatically; its name-based variable bindings become real expressions.
   axis pickers), so it is never a guess which is which.
 - **New documents start empty** — no starter geometry or preset variables are
   loaded on launch.
+- **A lumped port renders as a thick tube with colored terminal markers** —
+  red at `begin`, blue at `end` (voltage is measured begin → end) — instead
+  of a hairline, which is easy to lose against real geometry. A waveguide
+  port (no discrete terminals) still shows as a wire box with a direction
+  arrow.
+- **A port's terminals can be set by clicking**, not just typing coordinates.
+  In the port editor, **Pick** next to Begin or End arms click-to-place in
+  the viewport; clicking a body's face snaps that terminal to the face's
+  center. (Editing a lumped port's gap through **Begin/End**, not the
+  Region fields — Region is only meaningful for waveguide ports; the
+  resolver never reads it for a lumped one.)
 
 ## Building
 
@@ -202,8 +269,10 @@ Requires macOS 13+ and Swift 5.9.
 
 ## Not yet implemented
 
-Sketch-based modelling, extrude, boolean operations, face and edge selection,
-and snapping. On the solver side: a UI to launch a run and see its results,
-waveguide ports, near/far-field transforms, multi-port S-parameters, and a
-true PML (the current absorbing boundary is an approximate graded lossy
-layer — see [Solver](#solver)).
+Sketch-based modelling, extrude, boolean operations, general face/edge
+selection (beyond picking a face to place a port terminal), and snapping. On
+the solver side: solving waveguide ports, a near-to-far-field transform (so
+no 3D radiation-pattern render yet), multi-port S-parameters, adaptive
+time-stepping/frequency-domain features, and a true PML (the current
+absorbing boundary is an approximate graded lossy layer — see
+[Solver](#solver)).

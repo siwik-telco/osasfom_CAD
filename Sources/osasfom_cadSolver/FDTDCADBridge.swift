@@ -248,31 +248,43 @@ public final class CADMaterialProvider: MaterialProvider {
     /// Test punktu względem bryły w jej lokalnym układzie (odwraca
     /// translację/rotację/skalę), z dokładnym testem kształtu zamiast tylko
     /// axisAlignedBounds - istotne dla obróconych brył.
+    /// A point placed exactly on a body's own declared edge — the normal
+    /// case for a port meant to sit flush with a board edge or layer
+    /// boundary — can come out a few ULPs outside that edge once it has
+    /// passed through center/half-extent subtraction (e.g. `-lg/2` and
+    /// `-l/2` combining to a half-extent that's off by ~1e-15 from the
+    /// point's own coordinate). A bare `<=` then silently drops the body
+    /// that was actually meant to own that point, in favor of whatever is
+    /// underneath. `tolerance` absorbs that, in the same project units used
+    /// elsewhere in this comparison (mirrors `BodyBounds.contains`).
+    private static let containsTolerance = 1e-9
+
     private func contains(_ body: ResolvedBody, point: Vec3) -> Bool {
         // Szybkie odrzucenie przez AABB przed dokładniejszym testem.
         guard body.axisAlignedBounds.contains(point) else { return false }
 
         let local = toLocal(point, position: body.position, rotationDegrees: body.rotationDegrees, scale: body.scale)
+        let tol = Self.containsTolerance
 
         switch body.shape {
         case .box(let size):
-            return abs(local.x) <= size.x / 2 && abs(local.y) <= size.y / 2 && abs(local.z) <= size.z / 2
+            return abs(local.x) <= size.x / 2 + tol && abs(local.y) <= size.y / 2 + tol && abs(local.z) <= size.z / 2 + tol
         case .sheet(let size, _):
             // Kwestia grubości zerowej: traktujemy jak cienki plaster o
             // szerokości jednej komórki (mesher i tak stawia tam linię
             // graniczną dzięki snapToBodyEdges).
-            return abs(local.x) <= max(size.x, 0) / 2
-                && abs(local.y) <= max(size.y, 0) / 2
-                && abs(local.z) <= max(size.z, 0) / 2
+            return abs(local.x) <= max(size.x, 0) / 2 + tol
+                && abs(local.y) <= max(size.y, 0) / 2 + tol
+                && abs(local.z) <= max(size.z, 0) / 2 + tol
         case .cylinder(let radius, let begin, let end, let axis):
             let length = abs(end - begin)
             switch axis {
             case .x:
-                return abs(local.x) <= length / 2 && (local.y * local.y + local.z * local.z) <= radius * radius
+                return abs(local.x) <= length / 2 + tol && (local.y * local.y + local.z * local.z) <= (radius + tol) * (radius + tol)
             case .y:
-                return abs(local.y) <= length / 2 && (local.x * local.x + local.z * local.z) <= radius * radius
+                return abs(local.y) <= length / 2 + tol && (local.x * local.x + local.z * local.z) <= (radius + tol) * (radius + tol)
             case .z:
-                return abs(local.z) <= length / 2 && (local.x * local.x + local.y * local.y) <= radius * radius
+                return abs(local.z) <= length / 2 + tol && (local.x * local.x + local.y * local.y) <= (radius + tol) * (radius + tol)
             }
         }
     }
@@ -606,7 +618,7 @@ public final class SimulationRunner: ObservableObject {
         // everywhere, regardless of frequency — a result that looks like a
         // solver bug but is actually just an unconnected port.
         for port in resolved.simulation.ports where port.kind == .lumped && port.isExcited {
-            guard hasConductorNearPort(port, materialProvider: materialProvider, unit: unit) else {
+            guard hasConductorNearPort(port, materialProvider: materialProvider, unit: unit, meshLines: lines) else {
                 throw RunnerError.noConductorNearExcitedPort(port.name)
             }
         }
@@ -813,28 +825,76 @@ public final class SimulationRunner: ObservableObject {
     /// interface, which quarter-cell averaging can blend into an ambiguous
     /// mid-value — stepping out by one gap length lands solidly inside
     /// whatever body (if any) actually continues the circuit past the port.
+    /// Steps a small distance beyond each terminal, along the port's own
+    /// axis, and checks whether that lands in a conductor.
+    ///
+    /// The step is the **local mesh cell size** at that terminal, not the
+    /// port's own gap length. An earlier version stepped by the full gap,
+    /// which is wrong whenever a port is much longer than the (thin)
+    /// conductor it terminates on — e.g. a vertical via through a substrate,
+    /// gap ~1.5mm, landing on a 35µm copper ground plane: stepping a full
+    /// gap-length past the plane overshoots it by over a millimeter and
+    /// samples free space, reporting a false "not touching a conductor" for
+    /// a port that is in fact correctly placed. The mesh cell size is the
+    /// right scale because it's what the solver can actually resolve at that
+    /// point regardless of how long the port itself is.
     private func hasConductorNearPort(
         _ port: ResolvedPort,
         materialProvider: CADMaterialProvider,
-        unit: LengthUnit
+        unit: LengthUnit,
+        meshLines: GridMesher.Lines
     ) -> Bool {
         guard let begin = port.begin, let end = port.end else { return true } // waveguide ports: not this check's business
-        let delta = end - begin
-        let beyondBegin = begin - delta
-        let beyondEnd = end + delta
-        let direction = axisIndex(port.direction)
+        let axis = port.direction
+        let direction = axisIndex(axis)
+        let axisLinesMeters = meshLines.metersLines[direction]
+
+        func metersPoint(_ v: Vec3) -> Vec3 {
+            Vec3(x: unit.toMeters(v.x), y: unit.toMeters(v.y), z: unit.toMeters(v.z))
+        }
 
         // Comfortably above a lossy dielectric's conductivity, comfortably
         // below the solver's PEC approximation (1e7 S/m) — a coarse but
         // effective "is this basically a conductor" threshold.
         let conductiveThresholdSPerM = 1.0
 
-        for point in [beyondBegin, beyondEnd] {
-            let coords = (unit.toMeters(point.x), unit.toMeters(point.y), unit.toMeters(point.z))
-            let sigma = materialProvider.material(direction: direction, coords: coords, matType: 1)
-            if sigma >= conductiveThresholdSPerM { return true }
+        func isConductive(_ point: Vec3) -> Bool {
+            let sigma = materialProvider.material(direction: direction, coords: (point.x, point.y, point.z), matType: 1)
+            return sigma >= conductiveThresholdSPerM
         }
-        return false
+
+        // Sample on *both* sides of the terminal, not just "away from the
+        // other terminal": a terminal can equally correctly land on a thin
+        // conductor's near face (conductor is on the away side) or its far
+        // face (conductor is on the gap side, e.g. a via that passes all the
+        // way through a ground plane's thickness and ends at its outer
+        // surface). Assuming a fixed direction made a real, correctly
+        // touching via-through-ground-plane port register as unconnected.
+        func touchesConductor(at terminalMeters: Vec3) -> Bool {
+            let step = localCellSize(near: terminalMeters[axis], in: axisLinesMeters)
+            var forward = terminalMeters
+            forward[axis] += step
+            var backward = terminalMeters
+            backward[axis] -= step
+            return isConductive(forward) || isConductive(backward)
+        }
+
+        // Both terminals must actually touch a conductor — a resistor with
+        // only one end connected can't do anything, so requiring just one
+        // (the earlier behavior) was too lenient.
+        return touchesConductor(at: metersPoint(begin)) && touchesConductor(at: metersPoint(end))
+    }
+
+    /// The smaller of the two grid spacings adjacent to `value` in a sorted
+    /// line array — conservative on purpose, so a step never overshoots past
+    /// a thin layer just because the mesh happens to be coarser on the other
+    /// side of it.
+    private func localCellSize(near value: Double, in sortedLines: [Double]) -> Double {
+        guard sortedLines.count > 1 else { return 1e-3 }
+        let idx = nearestIndex(sortedLines, value)
+        if idx <= 0 { return sortedLines[1] - sortedLines[0] }
+        if idx >= sortedLines.count - 1 { return sortedLines[idx] - sortedLines[idx - 1] }
+        return min(sortedLines[idx] - sortedLines[idx - 1], sortedLines[idx + 1] - sortedLines[idx])
     }
 
     private func axisIndex(_ axis: Axis) -> Int {

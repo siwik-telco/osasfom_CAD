@@ -31,15 +31,15 @@ final class DocumentTests: XCTestCase {
 
         for text in ["1", "12", "125"] {
             document.updateBody(id, actionName: "Edit Dimension", coalescingKey: "body.width") { body in
-                body.primitive.updateBox { $0.width = Expression(source: text) }
+                body.primitive.updateBox { $0.endX = Expression(source: text) }
             }
         }
-        XCTAssertEqual(document.state.body(id: id)?.primitive.boxSpec?.width.source, "125")
+        XCTAssertEqual(document.state.body(id: id)?.primitive.boxSpec?.endX.source, "125")
 
         document.undo()
         XCTAssertEqual(
-            document.state.body(id: id)?.primitive.boxSpec?.width.source,
-            Primitive.defaultBox.boxSpec?.width.source,
+            document.state.body(id: id)?.primitive.boxSpec?.endX.source,
+            Primitive.defaultBox.boxSpec?.endX.source,
             "the whole typing run is a single undo step"
         )
     }
@@ -49,15 +49,15 @@ final class DocumentTests: XCTestCase {
         let id = document.addBody(.box, name: "Box")
 
         document.updateBody(id, actionName: "Edit", coalescingKey: "body.width") { body in
-            body.primitive.updateBox { $0.width = Expression(10) }
+            body.primitive.updateBox { $0.endX = Expression(10) }
         }
         document.endEditingSession()
         document.updateBody(id, actionName: "Edit", coalescingKey: "body.width") { body in
-            body.primitive.updateBox { $0.width = Expression(20) }
+            body.primitive.updateBox { $0.endX = Expression(20) }
         }
 
         document.undo()
-        XCTAssertEqual(document.state.body(id: id)?.primitive.boxSpec?.width.source, "10")
+        XCTAssertEqual(document.state.body(id: id)?.primitive.boxSpec?.endX.source, "10")
     }
 
     func testNoOpMutationDoesNotCreateAnUndoStep() {
@@ -77,7 +77,10 @@ final class DocumentTests: XCTestCase {
         let originalWidth = document.resolved.body(id: id)?.shape.localSize.x
 
         document.updateBody(id, actionName: "Edit") { body in
-            body.primitive.updateBox { $0.width = Expression(999) }
+            body.primitive.updateBox { spec in
+                spec.setBegin(.x, Expression(0))
+                spec.setEnd(.x, Expression(999))
+            }
         }
         XCTAssertEqual(document.resolved.body(id: id)?.shape.localSize.x, 999)
 
@@ -191,18 +194,21 @@ final class DocumentTests: XCTestCase {
         let bodyID = document.addBody(.box)
         let name = try? XCTUnwrap(document.state.variable(id: variableID)?.trimmedName)
         document.updateBody(bodyID, actionName: "Bind") { body in
-            body.primitive.updateBox { $0.width = Expression(source: name ?? "") }
+            body.primitive.updateBox { spec in
+                spec.setBegin(.x, Expression(0))
+                spec.setEnd(.x, Expression(source: name ?? ""))
+            }
         }
         document.endEditingSession()
 
         document.renameVariable(variableID, to: "renamed")
 
-        XCTAssertEqual(document.state.body(id: bodyID)?.primitive.boxSpec?.width.source, "renamed")
+        XCTAssertEqual(document.state.body(id: bodyID)?.primitive.boxSpec?.endX.source, "renamed")
         XCTAssertEqual(document.resolved.body(id: bodyID)?.shape.localSize.x, 7)
         XCTAssertFalse(document.resolved.diagnostics.hasErrors)
 
         document.undo()
-        XCTAssertEqual(document.state.body(id: bodyID)?.primitive.boxSpec?.width.source, name)
+        XCTAssertEqual(document.state.body(id: bodyID)?.primitive.boxSpec?.endX.source, name)
     }
 
     func testReferenceCountingWarnsBeforeDeletingAUsedVariable() {
@@ -213,8 +219,8 @@ final class DocumentTests: XCTestCase {
         let bodyID = document.addBody(.box)
         document.updateBody(bodyID, actionName: "Bind") { body in
             body.primitive.updateBox {
-                $0.width = Expression(source: name)
-                $0.height = Expression(source: "\(name) * 2")
+                $0.endX = Expression(source: name)
+                $0.endY = Expression(source: "\(name) * 2")
             }
         }
 

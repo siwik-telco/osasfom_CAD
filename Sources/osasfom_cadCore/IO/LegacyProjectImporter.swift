@@ -125,41 +125,57 @@ public enum LegacyProjectImporter {
             return Expression(source: name)
         }
 
-        // v1 cylinders were centred on their position along Y; v2 stores the
-        // terminals as absolute coordinates instead, so the old center and
-        // height are folded into begin/end here.
-        let legacyPositionY = legacy.transform?.position?.value.y ?? 0
-        let legacyPositionYSource = Expression.literalSource(legacyPositionY)
+        // v1 shapes were centred on their transform position; v2 primitives
+        // store absolute begin/end coordinates instead and ignore Position on
+        // the axes they cover (every axis for a box, the normal for a sheet,
+        // the chosen axis for a cylinder) — so the old center has to be
+        // folded into begin/end here, per axis, or a v1 project would
+        // silently reposition every shape to be centred on local zero.
+        let legacyPosition = legacy.transform?.position?.value ?? .zero
+        func foldedBeginEnd(center: Double, extent: Expression) -> (begin: Expression, end: Expression) {
+            let centerSource = Expression.literalSource(center)
+            return (
+                begin: Expression(source: "\(centerSource) - (\(extent.trimmed)) / 2"),
+                end: Expression(source: "\(centerSource) + (\(extent.trimmed)) / 2")
+            )
+        }
 
         let primitive: Primitive
         switch legacy.primitive {
         case "cylinder":
             let height = extent(bindings?.height, fallback: legacy.parameters.height)
+            let (begin, end) = foldedBeginEnd(center: legacyPosition.y, extent: height)
             primitive = .cylinder(
                 CylinderSpec(
                     radius: extent(bindings?.radius, fallback: legacy.parameters.radius),
-                    begin: Expression(source: "\(legacyPositionYSource) - (\(height.trimmed)) / 2"),
-                    end: Expression(source: "\(legacyPositionYSource) + (\(height.trimmed)) / 2"),
+                    begin: begin,
+                    end: end,
                     // v1 cylinders were always Y-aligned.
                     axis: .y
                 )
             )
         case "sheet":
+            let thickness = extent(bindings?.height, fallback: size.y)
+            let (begin, end) = foldedBeginEnd(center: legacyPosition.y, extent: thickness)
             primitive = .sheet(
                 SheetSpec(
                     width: extent(bindings?.width, fallback: size.x),
                     depth: extent(bindings?.depth, fallback: size.z),
-                    thickness: extent(bindings?.height, fallback: size.y),
+                    begin: begin,
+                    end: end,
+                    // v1 sheets were always Y-normal.
                     normal: .y
                 )
             )
         default:
+            let width = extent(bindings?.width, fallback: size.x)
+            let height = extent(bindings?.height, fallback: size.y)
+            let depth = extent(bindings?.depth, fallback: size.z)
+            let (beginX, endX) = foldedBeginEnd(center: legacyPosition.x, extent: width)
+            let (beginY, endY) = foldedBeginEnd(center: legacyPosition.y, extent: height)
+            let (beginZ, endZ) = foldedBeginEnd(center: legacyPosition.z, extent: depth)
             primitive = .box(
-                BoxSpec(
-                    width: extent(bindings?.width, fallback: size.x),
-                    height: extent(bindings?.height, fallback: size.y),
-                    depth: extent(bindings?.depth, fallback: size.z)
-                )
+                BoxSpec(beginX: beginX, endX: endX, beginY: beginY, endY: endY, beginZ: beginZ, endZ: endZ)
             )
         }
 

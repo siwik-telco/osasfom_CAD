@@ -105,8 +105,8 @@ final class VariableResolverTests: XCTestCase {
 
         XCTAssertEqual(state.variables[0].name, "patch_w")
         XCTAssertEqual(state.variables[1].expression.source, "patch_w / 2")
-        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.width.source, "patch_w")
-        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.height.source, "patch_w * 2")
+        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.endX.source, "(patch_w) / 2")
+        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.endY.source, "(patch_w * 2) / 2")
         XCTAssertEqual(state.bodies[0].transform.position.x.source, "patch_w / 4")
         XCTAssertEqual(state.simulation.domain.padding.x.source, "patch_w")
 

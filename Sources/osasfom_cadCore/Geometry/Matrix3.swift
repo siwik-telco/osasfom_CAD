@@ -34,6 +34,16 @@ public struct Matrix3: Hashable, Sendable {
         columns.0 * vector.x + columns.1 * vector.y + columns.2 * vector.z
     }
 
+    /// The inverse rotation. A rotation matrix is orthonormal, so its
+    /// inverse is just its transpose — no general 3x3 inversion needed.
+    public var transposed: Matrix3 {
+        Matrix3(
+            column0: Vec3(x: columns.0.x, y: columns.1.x, z: columns.2.x),
+            column1: Vec3(x: columns.0.y, y: columns.1.y, z: columns.2.y),
+            column2: Vec3(x: columns.0.z, y: columns.1.z, z: columns.2.z)
+        )
+    }
+
     public static func * (lhs: Matrix3, rhs: Matrix3) -> Matrix3 {
         Matrix3(
             column0: lhs.apply(to: rhs.columns.0),

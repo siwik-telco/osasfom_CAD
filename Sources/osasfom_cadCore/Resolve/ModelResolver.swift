@@ -102,25 +102,52 @@ public enum ModelResolver {
         }
 
         let shape: ResolvedShape?
+        /// A box's begin/end are absolute on every axis, so (unlike every
+        /// other primitive) its resolved position doesn't come from
+        /// transform.position at all — this carries the override out of the
+        /// switch to where `position` is assembled below.
+        var boxCenterOverride: Vec3?
+        /// A sheet's begin/end are absolute only along its normal axis; the
+        /// other two still take their center from transform.position.
+        var sheetNormalOverride: (axis: Axis, center: Double)?
 
         switch body.primitive {
         case .box(let spec):
-            let width = scalar(spec.width, field: "primitive.width")
-            let height = scalar(spec.height, field: "primitive.height")
-            let depth = scalar(spec.depth, field: "primitive.depth")
-            if let width, let height, let depth {
-                let size = Vec3(x: width, y: height, z: depth)
-                diagnostics.append(
-                    contentsOf: extentDiagnostics(
-                        subject: subject,
-                        labels: [
-                            "primitive.width": width,
-                            "primitive.height": height,
-                            "primitive.depth": depth
-                        ]
+            var boxBegin = Vec3.zero
+            var boxEnd = Vec3.zero
+            var allResolved = true
+            for axis in Axis.allCases {
+                guard
+                    let beginValue = scalar(spec.begin(axis), field: "primitive.begin\(axis.displayName)"),
+                    let endValue = scalar(spec.end(axis), field: "primitive.end\(axis.displayName)")
+                else {
+                    allResolved = false
+                    continue
+                }
+                boxBegin[axis] = beginValue
+                boxEnd[axis] = endValue
+                if beginValue == endValue {
+                    diagnostics.append(
+                        .error(
+                            subject,
+                            field: "primitive.end\(axis.displayName)",
+                            "Begin and end must differ along \(axis.displayName); a zero-extent box has no volume."
+                        )
                     )
+                }
+            }
+            if allResolved {
+                let size = Vec3(
+                    x: abs(boxEnd.x - boxBegin.x),
+                    y: abs(boxEnd.y - boxBegin.y),
+                    z: abs(boxEnd.z - boxBegin.z)
                 )
-                shape = size.components.allSatisfy { $0 > 0 } ? .box(size: size) : nil
+                shape = size.components.allSatisfy { $0 > 0 }
+                    ? .box(size: size)
+                    : nil
+                boxCenterOverride = size.components.allSatisfy { $0 > 0 }
+                    ? Vec3(x: (boxBegin.x + boxEnd.x) / 2, y: (boxBegin.y + boxEnd.y) / 2, z: (boxBegin.z + boxEnd.z) / 2)
+                    : nil
             } else {
                 shape = nil
             }
@@ -150,8 +177,10 @@ public enum ModelResolver {
         case .sheet(let spec):
             let width = scalar(spec.width, field: "primitive.width")
             let depth = scalar(spec.depth, field: "primitive.depth")
-            let thickness = scalar(spec.thickness, field: "primitive.thickness")
-            if let width, let depth, let thickness {
+            let normalBegin = scalar(spec.begin, field: "primitive.begin")
+            let normalEnd = scalar(spec.end, field: "primitive.end")
+            if let width, let depth, let normalBegin, let normalEnd {
+                let thickness = abs(normalEnd - normalBegin)
                 let (firstAxis, secondAxis) = spec.normal.perpendicular
                 var size = Vec3.zero
                 size[firstAxis] = width
@@ -168,16 +197,14 @@ public enum ModelResolver {
                         .error(subject, field: "primitive.depth", "Depth must be greater than zero.")
                     )
                 }
-                // Zero thickness is legal here: an infinitely thin PEC sheet is a
-                // standard FDTD construct. Only negative values are rejected.
-                if thickness < 0 {
-                    diagnostics.append(
-                        .error(subject, field: "primitive.thickness", "Thickness cannot be negative.")
-                    )
-                }
-                shape = width > 0 && depth > 0 && thickness >= 0
+                // begin == end is legal here: an infinitely thin PEC sheet is a
+                // standard FDTD construct.
+                shape = width > 0 && depth > 0
                     ? .sheet(size: size, normal: spec.normal)
                     : nil
+                if shape != nil {
+                    sheetNormalOverride = (axis: spec.normal, center: (normalBegin + normalEnd) / 2)
+                }
             } else {
                 shape = nil
             }
@@ -194,6 +221,15 @@ public enum ModelResolver {
         // from transform.position, same as every other primitive.
         if case let .cylinder(_, begin, end, axis)? = shape {
             position?[axis] = (begin + end) / 2
+        }
+        // A box's begin/end are absolute on every axis, so transform.position
+        // is unused for a box entirely.
+        if let boxCenterOverride {
+            position = boxCenterOverride
+        }
+        // A sheet's begin/end are absolute only along its normal axis.
+        if let sheetNormalOverride {
+            position?[sheetNormalOverride.axis] = sheetNormalOverride.center
         }
 
         if let scale, scale.components.contains(where: { $0 == 0 }) {

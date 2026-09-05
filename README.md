@@ -172,16 +172,29 @@ every machine regardless of locale.
 
 ### Primitives
 
-- **Box** — width (X), height (Y), depth (Z)
-- **Cylinder** — radius, a selectable axis, and **begin/end**: the absolute
-  coordinates of its two terminals along that axis, in the same frame as a
-  body's position. This lets a monopole start exactly at a ground plane
-  instead of always being centred on it — the body's Position field on that
-  one axis is unused for a cylinder; the other two axes still position it as
-  usual.
-- **Sheet** — width, depth, thickness and a selectable normal. **Thickness may
-  be zero**, giving an infinitely thin surface, which is the natural way to
-  model a PEC patch or ground plane.
+Every primitive is defined by **begin/end**, not an extent centred on the
+body's Position — on whichever axes it applies to, Position is unused and
+begin/end (absolute coordinates, same frame as Position) are authoritative.
+How many axes that covers depends on whether the shape has a privileged axis:
+
+- **Box** — begin/end on **all three** axes (X, Y and Z): a box has no
+  circular cross-section to leave centred on Position the way a cylinder's
+  perpendicular axes do, so Position is unused entirely. Internally this is
+  the same "absolute per-axis bounds" shape as `BoundsExpression`, already
+  used for the domain, ports and monitors.
+- **Cylinder** — radius, a selectable axis, and begin/end along *that one
+  axis*. This lets a monopole start exactly at a ground plane instead of
+  always being centred on it. The other two axes still position it from
+  Position, as usual — a circle has no natural "start/end" the way a length
+  does.
+- **Sheet** — width, depth (still Position-centred — same reasoning as a
+  cylinder's perpendicular axes), a selectable normal, and begin/end along
+  *that normal*. **`begin == end` is legal**, giving an infinitely thin
+  surface, which is the natural way to model a PEC patch or ground plane.
+
+The inspector's Transform section hides whichever Position row(s) a
+primitive doesn't use, with a note pointing at the Begin/End fields that
+replace it.
 
 ### Overlap priority
 

@@ -70,24 +70,23 @@ struct BodyInspectorView: View {
         Section {
             switch model.primitive {
             case .box:
-                ExpressionRow(
-                    label: "Width (X)",
-                    expression: boxBinding(\.width, field: "width"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-                ExpressionRow(
-                    label: "Height (Y)",
-                    expression: boxBinding(\.height, field: "height"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
-                ExpressionRow(
-                    label: "Depth (Z)",
-                    expression: boxBinding(\.depth, field: "depth"),
-                    variables: variables,
-                    unitSymbol: unit
-                )
+                ForEach(Axis.allCases) { axis in
+                    ExpressionRow(
+                        label: "Begin (\(axis.displayName))",
+                        expression: boxAxisBinding(axis, isBegin: true),
+                        variables: variables,
+                        unitSymbol: unit,
+                        help: axis == .x
+                            ? "Absolute coordinate of the box's face on this axis. Position is unused for a box — set extents here instead."
+                            : nil
+                    )
+                    ExpressionRow(
+                        label: "End (\(axis.displayName))",
+                        expression: boxAxisBinding(axis, isBegin: false),
+                        variables: variables,
+                        unitSymbol: unit
+                    )
+                }
 
             case .cylinder(let spec):
                 ExpressionRow(
@@ -157,14 +156,22 @@ struct BodyInspectorView: View {
                     unitSymbol: unit
                 )
                 ExpressionRow(
-                    label: "Thickness",
-                    expression: sheetBinding(\.thickness, field: "thickness"),
+                    label: "Begin (\(spec.normal.displayName))",
+                    expression: sheetBinding(\.begin, field: "begin"),
                     variables: variables,
                     unitSymbol: unit,
-                    help: "Zero is allowed and means an infinitely thin sheet."
+                    help: "Absolute coordinate of the first face along \(spec.normal.displayName). Position \(spec.normal.displayName) is unused for a sheet — set the extent here instead. Equal begin/end is allowed and means an infinitely thin sheet."
+                )
+                ExpressionRow(
+                    label: "End (\(spec.normal.displayName))",
+                    expression: sheetBinding(\.end, field: "end"),
+                    variables: variables,
+                    unitSymbol: unit
                 )
 
-                if let thickness = try? spec.thickness.value(variables: variables), thickness == 0 {
+                if let begin = try? spec.begin.value(variables: variables),
+                   let end = try? spec.end.value(variables: variables),
+                   begin == end {
                     Label(
                         "Zero-thickness sheet — meshed as a surface. Ideal for a PEC patch or ground plane.",
                         systemImage: "info.circle"
@@ -181,13 +188,31 @@ struct BodyInspectorView: View {
         }
     }
 
+    /// Axes whose Position component is ignored because the primitive's own
+    /// begin/end are authoritative there instead: all three for a box, the
+    /// normal for a sheet, the chosen axis for a cylinder.
+    private var axesIgnoringPosition: Set<Axis> {
+        switch body_?.primitive {
+        case .box: return Set(Axis.allCases)
+        case .sheet(let spec): return [spec.normal]
+        case .cylinder(let spec): return [spec.axis]
+        case nil: return []
+        }
+    }
+
+    private func positionIgnoredExplanation(_ axes: Set<Axis>) -> String {
+        let names = Axis.allCases.filter(axes.contains).map(\.displayName).joined(separator: "/")
+        let kind = body_?.kind.displayName.lowercased() ?? "primitive"
+        return "Position \(names) is set by the \(kind)'s Begin/End above."
+    }
+
     private var transformSection: some View {
-        let cylinderAxis = body_?.primitive.cylinderSpec?.axis
+        let ignoredAxes = axesIgnoringPosition
         return Section("Transform") {
             LabeledContent("Position") {
                 EmptyView()
             }
-            if cylinderAxis != .x {
+            if !ignoredAxes.contains(.x) {
                 ExpressionRow(
                     label: "X",
                     expression: transformBinding(\.position.x, field: "position.x"),
@@ -195,7 +220,7 @@ struct BodyInspectorView: View {
                     unitSymbol: unit
                 )
             }
-            if cylinderAxis != .y {
+            if !ignoredAxes.contains(.y) {
                 ExpressionRow(
                     label: "Y",
                     expression: transformBinding(\.position.y, field: "position.y"),
@@ -203,7 +228,7 @@ struct BodyInspectorView: View {
                     unitSymbol: unit
                 )
             }
-            if cylinderAxis != .z {
+            if !ignoredAxes.contains(.z) {
                 ExpressionRow(
                     label: "Z",
                     expression: transformBinding(\.position.z, field: "position.z"),
@@ -211,8 +236,8 @@ struct BodyInspectorView: View {
                     unitSymbol: unit
                 )
             }
-            if let cylinderAxis {
-                Text("Position \(cylinderAxis.displayName) is set by the cylinder's Begin/End above.")
+            if !ignoredAxes.isEmpty {
+                Text(positionIgnoredExplanation(ignoredAxes))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -353,19 +378,22 @@ struct BodyInspectorView: View {
 
     // MARK: - Bindings
 
-    private func boxBinding(
-        _ keyPath: WritableKeyPath<BoxSpec, Expression>,
-        field: String
-    ) -> Binding<Expression> {
-        Binding(
-            get: { self.body_?.primitive.boxSpec?[keyPath: keyPath] ?? .unset },
+    private func boxAxisBinding(_ axis: Axis, isBegin: Bool) -> Binding<Expression> {
+        let field = "\(isBegin ? "begin" : "end")\(axis.displayName)"
+        return Binding(
+            get: {
+                guard let spec = self.body_?.primitive.boxSpec else { return .unset }
+                return isBegin ? spec.begin(axis) : spec.end(axis)
+            },
             set: { newValue in
                 document.updateBody(
                     bodyID,
                     actionName: "Edit Dimension",
                     coalescingKey: "body.\(bodyID.uuidString).\(field)"
                 ) { body in
-                    body.primitive.updateBox { $0[keyPath: keyPath] = newValue }
+                    body.primitive.updateBox { spec in
+                        if isBegin { spec.setBegin(axis, newValue) } else { spec.setEnd(axis, newValue) }
+                    }
                 }
             }
         )
@@ -507,7 +535,11 @@ private struct EditableExtentsView: View {
             actionName: "Edit Extents",
             coalescingKey: "body.\(bodyID.uuidString).extents"
         ) { body in
-            body.primitive.applyLocalExtents(size)
+            body.primitive.applyLocalExtents(normalized)
+            // Harmless where begin/end already made it authoritative (every
+            // axis for a box, the normal axis for a sheet) — the resolver
+            // ignores Position there. Still needed for a sheet's two
+            // in-plane axes, which remain Position-centred.
             body.transform.position = Vector3Expression(normalized.center)
         }
         draft = nil

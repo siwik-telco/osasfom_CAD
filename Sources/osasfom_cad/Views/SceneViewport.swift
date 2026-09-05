@@ -93,8 +93,11 @@ struct SceneViewport: NSViewRepresentable {
             document.selectedBodyID = id
         }
 
-        /// Resolves a viewport click into the nearest face of the clicked
-        /// body and writes that face's center into the armed port terminal.
+        /// Resolves a viewport click into a snap point on the clicked body's
+        /// *actual* local shape (not its bounding box — see `BodySnapPoint`,
+        /// which this delegates to so the geometry has real unit test
+        /// coverage instead of living untestable in the app target) and
+        /// writes it into the armed port terminal.
         func handleFacePick(nodeName: String, worldPoint: Vec3) {
             guard
                 let request = document.facePickRequest,
@@ -102,7 +105,7 @@ struct SceneViewport: NSViewRepresentable {
                 let body = document.resolved.body(id: bodyID)
             else { return }
 
-            let facePoint = Self.nearestFaceCenter(of: body.axisAlignedBounds, to: worldPoint)
+            let facePoint = BodySnapPoint.nearest(on: body, to: worldPoint)
             document.updatePort(request.portID, actionName: "Set Port Terminal From Face") { port in
                 switch request.terminal {
                 case .begin: port.begin = Vector3Expression(facePoint)
@@ -110,34 +113,6 @@ struct SceneViewport: NSViewRepresentable {
                 }
             }
             document.facePickRequest = nil
-        }
-
-        /// The face of `bounds` closest to `point`, as its center — a click
-        /// lands on the body's surface, so exactly one axis/side pair should
-        /// be (near) an exact match; ties fall back to the first found.
-        private static func nearestFaceCenter(of bounds: BodyBounds, to point: Vec3) -> Vec3 {
-            var bestAxis: Axis = .x
-            var bestIsUpper = false
-            var bestDistance = Double.greatestFiniteMagnitude
-
-            for axis in Axis.allCases {
-                let distanceToLower = abs(point[axis] - bounds.lower(on: axis))
-                let distanceToUpper = abs(point[axis] - bounds.upper(on: axis))
-                if distanceToLower < bestDistance {
-                    bestDistance = distanceToLower
-                    bestAxis = axis
-                    bestIsUpper = false
-                }
-                if distanceToUpper < bestDistance {
-                    bestDistance = distanceToUpper
-                    bestAxis = axis
-                    bestIsUpper = true
-                }
-            }
-
-            var facePoint = bounds.center
-            facePoint[bestAxis] = bestIsUpper ? bounds.upper(on: bestAxis) : bounds.lower(on: bestAxis)
-            return facePoint
         }
     }
 }

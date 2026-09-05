@@ -25,40 +25,84 @@ public enum PrimitiveKind: String, Codable, CaseIterable, Identifiable, Sendable
 }
 
 public struct BoxSpec: Codable, Hashable, Sendable, ExpressionWalkable {
-    /// Extent along X.
-    public var width: Expression
-    /// Extent along Y.
-    public var height: Expression
-    /// Extent along Z.
-    public var depth: Expression
+    /// Absolute coordinates of the box's two faces on every axis, in the
+    /// same frame as a body's position. Like a cylinder's `begin`/`end`,
+    /// these are authoritative — a box has no axis a circular cross-section
+    /// would leave centred on the body's position, so unlike a cylinder
+    /// (one axis) or a sheet (its normal), a box's Position is unused on
+    /// *all three* axes.
+    public var beginX: Expression
+    public var endX: Expression
+    public var beginY: Expression
+    public var endY: Expression
+    public var beginZ: Expression
+    public var endZ: Expression
 
-    public init(width: Expression, height: Expression, depth: Expression) {
-        self.width = width
-        self.height = height
-        self.depth = depth
+    public init(
+        beginX: Expression, endX: Expression,
+        beginY: Expression, endY: Expression,
+        beginZ: Expression, endZ: Expression
+    ) {
+        self.beginX = beginX
+        self.endX = endX
+        self.beginY = beginY
+        self.endY = endY
+        self.beginZ = beginZ
+        self.endZ = endZ
     }
 
-    public subscript(axis: Axis) -> Expression {
-        get {
-            switch axis {
-            case .x: return width
-            case .y: return height
-            case .z: return depth
-            }
+    /// Convenience for a box centred at local zero with the given extents —
+    /// what `width/height/depth` used to mean before Position stopped being
+    /// consulted for a box.
+    public init(width: Expression, height: Expression, depth: Expression) {
+        func half(_ e: Expression) -> Expression { Expression(source: "(\(e.trimmed)) / 2") }
+        func negativeHalf(_ e: Expression) -> Expression { Expression(source: "-(\(e.trimmed)) / 2") }
+        self.init(
+            beginX: negativeHalf(width), endX: half(width),
+            beginY: negativeHalf(height), endY: half(height),
+            beginZ: negativeHalf(depth), endZ: half(depth)
+        )
+    }
+
+    public func begin(_ axis: Axis) -> Expression {
+        switch axis {
+        case .x: return beginX
+        case .y: return beginY
+        case .z: return beginZ
         }
-        set {
-            switch axis {
-            case .x: width = newValue
-            case .y: height = newValue
-            case .z: depth = newValue
-            }
+    }
+
+    public func end(_ axis: Axis) -> Expression {
+        switch axis {
+        case .x: return endX
+        case .y: return endY
+        case .z: return endZ
+        }
+    }
+
+    public mutating func setBegin(_ axis: Axis, _ value: Expression) {
+        switch axis {
+        case .x: beginX = value
+        case .y: beginY = value
+        case .z: beginZ = value
+        }
+    }
+
+    public mutating func setEnd(_ axis: Axis, _ value: Expression) {
+        switch axis {
+        case .x: endX = value
+        case .y: endY = value
+        case .z: endZ = value
         }
     }
 
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {
-        transform(&width)
-        transform(&height)
-        transform(&depth)
+        transform(&beginX)
+        transform(&endX)
+        transform(&beginY)
+        transform(&endY)
+        transform(&beginZ)
+        transform(&endZ)
     }
 }
 
@@ -91,30 +135,53 @@ public struct CylinderSpec: Codable, Hashable, Sendable, ExpressionWalkable {
 }
 
 public struct SheetSpec: Codable, Hashable, Sendable, ExpressionWalkable {
-    /// Extent along the first in-plane axis (`normal.perpendicular.0`).
+    /// Extent along the first in-plane axis (`normal.perpendicular.0`). Still
+    /// centred on the body's Position, same as before — a sheet's in-plane
+    /// extents have no natural "start/end" the way its thickness does.
     public var width: Expression
     /// Extent along the second in-plane axis (`normal.perpendicular.1`).
     public var depth: Expression
-    /// Extent along `normal`. Zero is legal and means an infinitely thin sheet.
-    public var thickness: Expression
+    /// Absolute coordinate of the first face along `normal`, in the same
+    /// frame as a body's position — like a cylinder's `begin`, authoritative
+    /// on this one axis, so Position is unused along `normal`.
+    public var begin: Expression
+    /// Coordinate of the second face along `normal`. `begin == end` is
+    /// legal and means an infinitely thin sheet.
+    public var end: Expression
     public var normal: Axis
 
     public init(
         width: Expression,
         depth: Expression,
-        thickness: Expression,
+        begin: Expression,
+        end: Expression,
         normal: Axis = .y
     ) {
         self.width = width
         self.depth = depth
-        self.thickness = thickness
+        self.begin = begin
+        self.end = end
         self.normal = normal
+    }
+
+    /// Convenience for a sheet centred at local zero along `normal` with the
+    /// given thickness — what `thickness` used to mean before Position
+    /// stopped being consulted along that one axis.
+    public init(width: Expression, depth: Expression, thickness: Expression, normal: Axis = .y) {
+        self.init(
+            width: width,
+            depth: depth,
+            begin: Expression(source: "-(\(thickness.trimmed)) / 2"),
+            end: Expression(source: "(\(thickness.trimmed)) / 2"),
+            normal: normal
+        )
     }
 
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {
         transform(&width)
         transform(&depth)
-        transform(&thickness)
+        transform(&begin)
+        transform(&end)
     }
 }
 
@@ -192,21 +259,28 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
     /// replacing the affected expressions with literals.
     ///
     /// Only defined for boxes and sheets — a cylinder has no unique inverse, so
-    /// the caller must not offer the edit. Returns the extents actually applied.
-    public mutating func applyLocalExtents(_ size: Vec3) {
+    /// the caller must not offer the edit. `bounds` is in the same absolute
+    /// frame as `begin`/`end` (world/local, pre-rotation) — a box writes it
+    /// directly into begin/end on every axis; a sheet writes its normal axis
+    /// the same way and keeps `width`/`depth` (still Position-centred) as a
+    /// plain size on the other two.
+    public mutating func applyLocalExtents(_ bounds: BodyBounds) {
         switch self {
         case .box:
             updateBox { spec in
-                spec.width = Expression(size.x)
-                spec.height = Expression(size.y)
-                spec.depth = Expression(size.z)
+                for axis in Axis.allCases {
+                    spec.setBegin(axis, Expression(bounds.minimum[axis]))
+                    spec.setEnd(axis, Expression(bounds.maximum[axis]))
+                }
             }
         case .sheet(let existing):
             let (first, second) = existing.normal.perpendicular
+            let size = bounds.size
             updateSheet { spec in
                 spec.width = Expression(size[first])
                 spec.depth = Expression(size[second])
-                spec.thickness = Expression(size[existing.normal])
+                spec.begin = Expression(bounds.minimum[existing.normal])
+                spec.end = Expression(bounds.maximum[existing.normal])
             }
         case .cylinder:
             break
@@ -260,19 +334,40 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
 
         switch (self, kind) {
         case (.box(let spec), .sheet):
+            // The box's in-plane extents (X/Z, centred at local 0 by
+            // convention — see `defaultBox`) carry over as width/depth;
+            // its Y extent becomes the sheet's normal-axis begin/end
+            // directly, since both are already absolute on that axis.
             return .sheet(
-                SheetSpec(width: spec.width, depth: spec.depth, thickness: spec.height, normal: .y)
+                SheetSpec(
+                    width: Expression(source: "(\(spec.endX.trimmed)) - (\(spec.beginX.trimmed))"),
+                    depth: Expression(source: "(\(spec.endZ.trimmed)) - (\(spec.beginZ.trimmed))"),
+                    begin: spec.beginY,
+                    end: spec.endY,
+                    normal: .y
+                )
             )
         case (.sheet(let spec), .box):
-            return .box(
-                BoxSpec(width: spec.width, height: spec.thickness, depth: spec.depth)
-            )
+            // The sheet's normal-axis begin/end carry over unchanged (both
+            // absolute); its in-plane width/depth become a box extent
+            // centred at local 0, matching how a fresh box is defined.
+            let (first, second) = spec.normal.perpendicular
+            var box = BoxSpec(width: spec.width, height: spec.width, depth: spec.width)
+            box.setBegin(spec.normal, spec.begin)
+            box.setEnd(spec.normal, spec.end)
+            box.setBegin(first, Expression(source: "-(\(spec.width.trimmed)) / 2"))
+            box.setEnd(first, Expression(source: "(\(spec.width.trimmed)) / 2"))
+            box.setBegin(second, Expression(source: "-(\(spec.depth.trimmed)) / 2"))
+            box.setEnd(second, Expression(source: "(\(spec.depth.trimmed)) / 2"))
+            return .box(box)
         case (.box(let spec), .cylinder):
+            // The box's Y extent (already absolute) becomes the cylinder's
+            // begin/end directly.
             return .cylinder(
                 CylinderSpec(
-                    radius: Expression(source: "(\(spec.width.trimmed)) / 2"),
-                    begin: Expression(source: "-(\(spec.height.trimmed)) / 2"),
-                    end: Expression(source: "(\(spec.height.trimmed)) / 2"),
+                    radius: Expression(source: "((\(spec.endX.trimmed)) - (\(spec.beginX.trimmed))) / 2"),
+                    begin: spec.beginY,
+                    end: spec.endY,
                     axis: .y
                 )
             )
@@ -280,25 +375,26 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
             return .cylinder(
                 CylinderSpec(
                     radius: Expression(source: "(\(spec.width.trimmed)) / 2"),
-                    begin: Expression(source: "-(\(spec.thickness.trimmed)) / 2"),
-                    end: Expression(source: "(\(spec.thickness.trimmed)) / 2"),
+                    begin: spec.begin,
+                    end: spec.end,
                     axis: spec.normal
                 )
             )
         case (.cylinder(let spec), .box):
             let diameter = Expression(source: "2 * (\(spec.radius.trimmed))")
-            let length = Expression(source: "(\(spec.end.trimmed)) - (\(spec.begin.trimmed))")
             let (first, second) = spec.axis.perpendicular
             var box = BoxSpec(width: diameter, height: diameter, depth: diameter)
-            box[spec.axis] = length
-            box[first] = diameter
-            box[second] = diameter
+            box.setBegin(spec.axis, spec.begin)
+            box.setEnd(spec.axis, spec.end)
+            box.setBegin(first, Expression(source: "-(\(diameter.trimmed)) / 2"))
+            box.setEnd(first, Expression(source: "(\(diameter.trimmed)) / 2"))
+            box.setBegin(second, Expression(source: "-(\(diameter.trimmed)) / 2"))
+            box.setEnd(second, Expression(source: "(\(diameter.trimmed)) / 2"))
             return .box(box)
         case (.cylinder(let spec), .sheet):
             let diameter = Expression(source: "2 * (\(spec.radius.trimmed))")
-            let length = Expression(source: "(\(spec.end.trimmed)) - (\(spec.begin.trimmed))")
             return .sheet(
-                SheetSpec(width: diameter, depth: diameter, thickness: length, normal: spec.axis)
+                SheetSpec(width: diameter, depth: diameter, begin: spec.begin, end: spec.end, normal: spec.axis)
             )
         default:
             return .makeDefault(kind)

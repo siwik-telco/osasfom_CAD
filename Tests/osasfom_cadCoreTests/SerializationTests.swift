@@ -86,7 +86,10 @@ final class SerializationTests: XCTestCase {
     func testExpressionsArePersistedAsSource() throws {
         let data = try ProjectSerializer.encode(makeRichState())
         let json = try XCTUnwrap(String(data: data, encoding: .utf8))
-        XCTAssertTrue(json.contains("\"w * 0.9\""))
+        // A box's stored begin/end wrap the original source (e.g.
+        // "(w * 0.9) / 2"), so check the source survives as a substring
+        // rather than requiring an exact quoted match.
+        XCTAssertTrue(json.contains("w * 0.9"))
         XCTAssertTrue(json.contains("\"half\""))
         XCTAssertFalse(json.contains("\"36\""), "the resolved value must not be persisted")
     }
@@ -158,10 +161,15 @@ final class SerializationTests: XCTestCase {
         XCTAssertEqual(state.lengthUnit, .millimeter)
         XCTAssertEqual(state.bodies.count, 2)
 
-        // A binding becomes a real expression; unbound dimensions keep their number.
+        // A binding becomes a real expression; unbound dimensions keep their
+        // number. Position is unused for a box, so the old center (1, 2, 3)
+        // must be folded into begin/end instead of silently dropped.
         let patch = try XCTUnwrap(state.bodies.first?.primitive.boxSpec)
-        XCTAssertEqual(patch.width.source, "patch_w")
-        XCTAssertEqual(patch.height.source, "1.6")
+        XCTAssertTrue(patch.endX.referencedVariableNames.contains("patch_w"), "the width binding must survive as a real expression")
+        XCTAssertEqual(try patch.beginX.value(variables: ["patch_w": 40]), -19, accuracy: 1e-9)
+        XCTAssertEqual(try patch.endX.value(variables: ["patch_w": 40]), 21, accuracy: 1e-9)
+        XCTAssertEqual(try patch.beginY.value(), 1.2, accuracy: 1e-9, "unbound height (1.6) centred on the old position.y (2)")
+        XCTAssertEqual(try patch.endY.value(), 2.8, accuracy: 1e-9)
         XCTAssertEqual(state.bodies[0].transform.position.x.source, "1")
 
         let probe = try XCTUnwrap(state.bodies[1].primitive.cylinderSpec)

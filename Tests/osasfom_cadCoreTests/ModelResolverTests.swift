@@ -60,11 +60,13 @@ final class ModelResolverTests: XCTestCase {
             ],
             variables: [CADVariable(name: "w", value: 5)]
         )
+        let expectedEndX = state.bodies[0].primitive.boxSpec?.endX.source
 
         let first = ModelResolver.resolve(state)
         let second = ModelResolver.resolve(state)
 
-        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.width.source, "w")
+        XCTAssertEqual(state.bodies[0].primitive.boxSpec?.endX.source, expectedEndX, "resolving must not bake the expression into a literal")
+        XCTAssertTrue(expectedEndX?.contains("w") ?? false)
         XCTAssertEqual(first.bodies.first?.shape, second.bodies.first?.shape)
         XCTAssertEqual(first.diagnostics.map(\.id), second.diagnostics.map(\.id))
     }

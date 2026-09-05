@@ -323,7 +323,7 @@ public final class SceneController {
                 // visibly thick tube (a hairline `.line` primitive is easy to
                 // lose in a real model) with its begin/end terminals marked
                 // in distinct colors, since voltage is measured begin->end.
-                let radius = max(port.gapLength * 0.12, 0.25)
+                let radius = max(port.gapLength * 0.024, 0.05)
                 container.addChildNode(
                     SceneGeometryFactory.makeTubeNode(from: begin, to: end, radius: radius, color: SceneStyle.port)
                 )

@@ -254,6 +254,10 @@ unit to tell the importing tool to use.
   axis pickers), so it is never a guess which is which.
 - **New documents start empty** — no starter geometry or preset variables are
   loaded on launch.
+- **File → New (⌘N) / Open (⌘O)** both guard unsaved work: if the current
+  document has unsaved changes, a Save / Don't Save / Cancel dialog runs
+  first, so switching documents can never silently discard something you
+  hadn't saved.
 - **A lumped port renders as a thick tube with colored terminal markers** —
   red at `begin`, blue at `end` (voltage is measured begin → end) — instead
   of a hairline, which is easy to lose against real geometry. A waveguide

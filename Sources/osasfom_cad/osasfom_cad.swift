@@ -48,6 +48,9 @@ struct osasfom_cad: App {
         }
 
         CommandGroup(replacing: .saveItem) {
+            Button("New") { postDocumentCommand(.new) }
+                .keyboardShortcut("n", modifiers: .command)
+
             Button("Open…") { postDocumentCommand(.open) }
                 .keyboardShortcut("o", modifiers: .command)
 

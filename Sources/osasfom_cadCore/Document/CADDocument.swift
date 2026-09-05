@@ -492,6 +492,19 @@ public final class CADDocument: ObservableObject {
         hasUnsavedChanges = false
     }
 
+    /// Resets the document to a fresh, empty project — same starting point as
+    /// a freshly launched app. The caller is responsible for confirming any
+    /// unsaved changes first; this discards unconditionally.
+    public func resetToNewDocument(name: String = "Untitled") {
+        undoStack.removeAll()
+        selectedBodyID = nil
+        selectedPortID = nil
+        facePickRequest = nil
+        apply(CADModelState(name: name), markDirty: false)
+        fileURL = nil
+        hasUnsavedChanges = false
+    }
+
     public func replaceState(_ newState: CADModelState, actionName: String) {
         perform(actionName) { state in
             state = newState

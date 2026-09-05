@@ -12,6 +12,9 @@ struct MainView: View {
     @State private var frameRequestToken = 0
     @State private var isShowingDiagnostics = false
     @State private var alert: AlertContent?
+    /// Non-nil while a "New" (or similar discard-current-document) action is
+    /// waiting on the unsaved-changes confirmation dialog.
+    @State private var pendingDiscardAction: (() -> Void)?
 
     enum InspectorTab: String, CaseIterable, Identifiable {
         case body = "Body"
@@ -50,6 +53,20 @@ struct MainView: View {
                 message: Text(content.message),
                 dismissButton: .default(Text("OK"))
             )
+        }
+        .confirmationDialog(
+            "Save changes to “\(document.displayName)” first?",
+            isPresented: Binding(
+                get: { pendingDiscardAction != nil },
+                set: { if !$0 { pendingDiscardAction = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Save") { saveThenRunPendingDiscardAction() }
+            Button("Don't Save", role: .destructive) { runPendingDiscardAction() }
+            Button("Cancel", role: .cancel) { pendingDiscardAction = nil }
+        } message: {
+            Text("Your changes will be lost if you don't save them.")
         }
         .onReceive(NotificationCenter.default.publisher(for: .cadDocumentCommand)) { notification in
             handle(notification)
@@ -235,6 +252,7 @@ struct MainView: View {
     private func handle(_ notification: Notification) {
         guard let command = notification.object as? DocumentCommand else { return }
         switch command {
+        case .new: newProject()
         case .open: openProject()
         case .save: saveProject(forcingPrompt: false)
         case .saveAs: saveProject(forcingPrompt: true)
@@ -244,13 +262,60 @@ struct MainView: View {
         }
     }
 
-    private func openProject() {
-        guard let url = ProjectPanels.chooseProjectToOpen() else { return }
-        do {
-            try document.load(from: url)
+    private func newProject() {
+        confirmDiscardingUnsavedChanges {
+            document.resetToNewDocument()
             frameRequestToken += 1
+        }
+    }
+
+    private func openProject() {
+        confirmDiscardingUnsavedChanges {
+            guard let url = ProjectPanels.chooseProjectToOpen() else { return }
+            do {
+                try document.load(from: url)
+                frameRequestToken += 1
+            } catch {
+                alert = AlertContent(title: "Could not open project", message: message(for: error))
+            }
+        }
+    }
+
+    /// Runs `action` immediately if the document has no unsaved changes;
+    /// otherwise defers it behind the Save / Don't Save / Cancel dialog, so
+    /// "New" and "Open" can never silently discard work in progress.
+    private func confirmDiscardingUnsavedChanges(then action: @escaping () -> Void) {
+        guard document.hasUnsavedChanges else {
+            action()
+            return
+        }
+        pendingDiscardAction = action
+    }
+
+    private func runPendingDiscardAction() {
+        pendingDiscardAction?()
+        pendingDiscardAction = nil
+    }
+
+    private func saveThenRunPendingDiscardAction() {
+        do {
+            if try document.save() {
+                runPendingDiscardAction()
+                return
+            }
+            guard let url = ProjectPanels.chooseProjectSaveLocation(
+                suggestedName: document.displayName
+            ) else {
+                // Cancelled the save panel — cancel the pending action too,
+                // rather than proceeding to discard unsaved work anyway.
+                pendingDiscardAction = nil
+                return
+            }
+            try document.save(to: url)
+            runPendingDiscardAction()
         } catch {
-            alert = AlertContent(title: "Could not open project", message: message(for: error))
+            alert = AlertContent(title: "Could not save project", message: message(for: error))
+            pendingDiscardAction = nil
         }
     }
 

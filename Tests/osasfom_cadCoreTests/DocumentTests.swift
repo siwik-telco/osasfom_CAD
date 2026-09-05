@@ -284,4 +284,33 @@ final class DocumentTests: XCTestCase {
         let data = try document.solverExportData()
         XCTAssertGreaterThan(data.count, 0)
     }
+
+    func testResetToNewDocumentClearsEverything() throws {
+        let document = CADDocument()
+        let bodyID = document.addBody(.box)
+        document.selectedBodyID = bodyID
+        document.selectedPortID = document.addPort()
+
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("reset-\(UUID().uuidString).osasfomcad")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try document.save(to: url)
+        XCTAssertEqual(document.fileURL, url)
+
+        _ = document.addBody(.cylinder) // make it dirty again after saving
+        XCTAssertTrue(document.hasUnsavedChanges)
+        XCTAssertTrue(document.canUndo)
+
+        document.resetToNewDocument(name: "Fresh")
+
+        XCTAssertTrue(document.state.bodies.isEmpty)
+        XCTAssertTrue(document.state.simulation.ports.isEmpty)
+        XCTAssertEqual(document.state.name, "Fresh")
+        XCTAssertNil(document.selectedBodyID)
+        XCTAssertNil(document.selectedPortID)
+        XCTAssertNil(document.fileURL, "a new document is not tied to the previously saved file")
+        XCTAssertFalse(document.hasUnsavedChanges)
+        XCTAssertFalse(document.canUndo, "resetting starts a clean undo history")
+        XCTAssertFalse(document.canRedo)
+    }
 }

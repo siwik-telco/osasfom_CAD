@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 /// Menu commands are posted as notifications so the `Commands` builder does not
 /// need a reference to the view's state.
 enum DocumentCommand {
+    case new
     case open
     case save
     case saveAs

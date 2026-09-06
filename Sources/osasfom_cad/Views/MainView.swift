@@ -9,6 +9,8 @@ struct MainView: View {
 
     @State private var inspectorTab: InspectorTab = .body
     @State private var viewOptions = SceneController.ViewOptions()
+    @State private var farFieldFrequencyIndex = 0
+    @State private var farFieldQuantity: FarFieldQuantity = .directivity
     @State private var frameRequestToken = 0
     @State private var isShowingDiagnostics = false
     @State private var alert: AlertContent?
@@ -80,6 +82,7 @@ struct MainView: View {
             ZStack(alignment: .top) {
                 SceneViewport(
                     document: document,
+                    farField: farFieldOverlayMesh,
                     options: viewOptions,
                     frameRequestToken: frameRequestToken
                 )
@@ -94,11 +97,19 @@ struct MainView: View {
                 }
                 .padding(.top, 12)
 
-                HStack {
+                HStack(alignment: .top) {
+                    // Bottom-left, clear of the option checkboxes on the right.
+                    VStack {
+                        Spacer()
+                        farFieldLegendOverlay
+                    }
                     Spacer()
-                    viewOptionsOverlay
-                        .padding(12)
+                    VStack {
+                        viewOptionsOverlay
+                        Spacer()
+                    }
                 }
+                .padding(12)
             }
             .onExitCommand {
                 if document.facePickRequest != nil { document.facePickRequest = nil }
@@ -127,16 +138,75 @@ struct MainView: View {
         .shadow(radius: 2)
     }
 
+    /// The pattern drawn over the model: the selected frequency's, scaled to
+    /// the model so it reads against the geometry rather than dwarfing it or
+    /// vanishing inside it. A pattern is a shape, not a size — its true
+    /// radius is meaningless — so the scale is presentational on purpose.
+    private var farFieldOverlayMesh: FarFieldMesh? {
+        guard viewOptions.showFarField else { return nil }
+        let patterns = simulationRunner.farFieldPatterns
+        guard !patterns.isEmpty else { return nil }
+        let pattern = patterns.indices.contains(farFieldFrequencyIndex)
+            ? patterns[farFieldFrequencyIndex]
+            : patterns[0]
+
+        let extent = document.resolved.modelBounds?.size.largestComponent ?? 0
+        let radius = extent > 0 ? extent * 0.75 : 10
+        return pattern.mesh(quantity: farFieldQuantity, radius: radius)
+    }
+
     private var viewOptionsOverlay: some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle("Grid", isOn: $viewOptions.showGrid)
             Toggle("Domain", isOn: $viewOptions.showDomain)
             Toggle("Ports", isOn: $viewOptions.showPorts)
+            if !simulationRunner.farFieldPatterns.isEmpty {
+                Toggle("Far field", isOn: $viewOptions.showFarField)
+                if viewOptions.showFarField {
+                    farFieldOpacityControl
+                }
+            }
         }
         .toggleStyle(.checkbox)
         .font(.caption)
         .padding(10)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// Fades the pattern back so the antenna inside it stays visible. The
+    /// slider reaches zero, which hides the surface outright — the same
+    /// result as the checkbox, but reachable without letting go of the
+    /// control you are already dragging.
+    private var farFieldOpacityControl: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "circle.lefthalf.filled")
+                .foregroundStyle(.secondary)
+            Slider(value: $viewOptions.farFieldOpacity, in: 0...1)
+                .frame(width: 92)
+            Text("\(Int(viewOptions.farFieldOpacity * 100))%")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 32, alignment: .trailing)
+        }
+        .padding(.leading, 2)
+        .help("Pattern opacity. Drag to zero to hide it.")
+    }
+
+    /// The colour scale for the pattern currently drawn.
+    @ViewBuilder
+    private var farFieldLegendOverlay: some View {
+        if viewOptions.showFarField,
+           viewOptions.farFieldOpacity > 0.001,
+           let mesh = farFieldOverlayMesh,
+           !mesh.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(farFieldQuantity.displayName)
+                    .font(.caption.bold())
+                FarFieldLegendView(mesh: mesh, unitLabel: farFieldQuantity.unitLabel)
+            }
+            .padding(10)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
     }
 
     // MARK: - Inspector
@@ -156,8 +226,10 @@ struct MainView: View {
 
             switch inspectorTab {
             case .body:
-                if let selectedBodyID = document.selectedBodyID,
-                   document.state.body(id: selectedBodyID) != nil {
+                if document.canCombineSelectedBodies {
+                    CombineSelectionView(document: document)
+                } else if let selectedBodyID = document.selectedBodyID,
+                          document.state.body(id: selectedBodyID) != nil {
                     BodyInspectorView(document: document, bodyID: selectedBodyID)
                 } else {
                     emptySelection
@@ -167,7 +239,12 @@ struct MainView: View {
             case .materials:
                 MaterialsInspectorView(document: document)
             case .run:
-                SimulationRunnerView(document: document, runner: simulationRunner)
+                SimulationRunnerView(
+                    document: document,
+                    runner: simulationRunner,
+                    farFieldFrequencyIndex: $farFieldFrequencyIndex,
+                    farFieldQuantity: $farFieldQuantity
+                )
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -219,6 +296,23 @@ struct MainView: View {
                 Label("Delete", systemImage: "trash")
             }
             .disabled(document.selectedBodyID == nil)
+
+            Menu {
+                if let target = document.combineTargetBody {
+                    Text("Keeps “\(target.name)”")
+                }
+                ForEach(BooleanKind.allCases) { kind in
+                    Button {
+                        document.combineSelectedBodies(kind)
+                    } label: {
+                        Label(kind.displayName, systemImage: kind.symbolName)
+                    }
+                }
+            } label: {
+                Label("Combine", systemImage: "square.on.square.dashed")
+            }
+            .disabled(!document.canCombineSelectedBodies)
+            .help("Combine the selected bodies. Select two or more; the first one picked is kept.")
 
             Divider()
 

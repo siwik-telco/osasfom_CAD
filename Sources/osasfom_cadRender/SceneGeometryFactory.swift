@@ -132,6 +132,65 @@ public enum SceneGeometryFactory {
         }
     }
 
+    /// Geometry for a radiation pattern, coloured by level.
+    ///
+    /// Vertex colours carry the dB ramp, so one draw call shows the whole
+    /// pattern and the shading survives any camera angle — the alternative,
+    /// slicing the surface into per-colour submeshes, would break the
+    /// surface into visible bands.
+    public static func makeFarFieldGeometry(_ mesh: FarFieldMesh, opacity: Double = 0.85) -> SCNGeometry {
+        let positions = mesh.vertices.map { vector($0.position) }
+        let indices = mesh.indices.map { UInt32($0) }
+
+        // Built from raw float RGBA rather than an [NSColor] convenience
+        // initializer, which SceneKit does not offer for a colour source.
+        var componentData = [Float]()
+        componentData.reserveCapacity(mesh.vertices.count * 4)
+        for vertex in mesh.vertices {
+            let color = patternColor(level: vertex.level)
+            componentData += [
+                Float(color.redComponent),
+                Float(color.greenComponent),
+                Float(color.blueComponent),
+                1
+            ]
+        }
+        let stride = MemoryLayout<Float>.size * 4
+        let colorSource = SCNGeometrySource(
+            data: Data(bytes: componentData, count: componentData.count * MemoryLayout<Float>.size),
+            semantic: .color,
+            vectorCount: mesh.vertices.count,
+            usesFloatComponents: true,
+            componentsPerVector: 4,
+            bytesPerComponent: MemoryLayout<Float>.size,
+            dataOffset: 0,
+            dataStride: stride
+        )
+
+        let geometry = SCNGeometry(
+            sources: [SCNGeometrySource(vertices: positions), colorSource],
+            elements: [SCNGeometryElement(indices: indices, primitiveType: .triangles)]
+        )
+
+        let material = SCNMaterial()
+        // Constant lighting: the surface encodes a measurement, and shading it
+        // would make the same level read as two different colours depending on
+        // which way the lobe happens to face.
+        material.lightingModel = .constant
+        material.isDoubleSided = true
+        material.diffuse.contents = NSColor.white
+        material.transparency = CGFloat(min(max(opacity, 0), 1))
+        material.blendMode = .alpha
+        material.writesToDepthBuffer = false
+        geometry.materials = [material]
+        return geometry
+    }
+
+    /// The shared ramp from Core, as an `NSColor` for the vertex buffer.
+    static func patternColor(level: Double) -> NSColor {
+        NSColor(FarFieldColorRamp.color(level: level))
+    }
+
     public static func makeMaterial(
         color: RGBAColor,
         isSelected: Bool,

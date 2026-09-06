@@ -426,6 +426,47 @@ public struct S11Point: Hashable, Sendable {
     public let decibels: Double
 }
 
+/// Axis domains for plotting an S11 sweep, derived from the points actually
+/// being drawn so the axes can never disagree with the curve.
+///
+/// Charting frameworks left to themselves pick a "nice" numeric domain
+/// anchored at zero, which for a 2-3 GHz sweep spends two thirds of the plot
+/// on frequencies that were never simulated and squashes the resonance into a
+/// spike. The swept range *is* the interesting range, so it is stated
+/// outright — and the dB axis is derived too, so a dip deeper than a default
+/// domain cannot be clipped off the bottom.
+public struct S11PlotDomain: Hashable, Sendable {
+    public let frequencyGHz: ClosedRange<Double>
+    public let decibels: ClosedRange<Double>
+
+    /// Gridlines land on multiples of this, so the labels stay readable.
+    private static let division = 5.0
+
+    public init(_ spectrum: [S11Point]) {
+        let frequencies = spectrum.map { $0.hertz / 1e9 }
+        let lowest = frequencies.min() ?? 0
+        let highest = frequencies.max() ?? 1
+        // A single point (or none) has no width to plot; give it one rather
+        // than letting the range collapse to something a chart can't use.
+        frequencyGHz = highest > lowest ? lowest...highest : lowest...(lowest + 1)
+
+        let values = spectrum.map(\.decibels)
+        let deepest = values.min() ?? -20
+        let shallowest = values.max() ?? 0
+
+        // Round out past the extremes so the trace never runs along the frame.
+        // The floor of -5 keeps a nearly flat, badly-matched result from being
+        // drawn on a domain so tight that numerical fuzz reads as structure.
+        let lower = min(Self.rounded(deepest - 2, .down), -Self.division)
+        let upper = Self.rounded(max(shallowest, 0), .up)
+        decibels = lower...max(upper, lower + Self.division)
+    }
+
+    private static func rounded(_ value: Double, _ rule: FloatingPointRoundingRule) -> Double {
+        (value / division).rounded(rule) * division
+    }
+}
+
 /// A completed run, with enough of the model's state at the time to make
 /// sense of it later — in particular the variable values that produced it,
 /// so a later change to those variables is visible as a diff against any
@@ -471,6 +512,12 @@ public final class SimulationRunner: ObservableObject {
     @Published public private(set) var progress: Double = 0
     @Published public private(set) var s11DbAtCenter: Double?
     @Published public private(set) var s11Spectrum: [S11Point] = []
+    /// One pattern per recorded far-field frequency. Empty unless the run had
+    /// far-field recording switched on.
+    @Published public private(set) var farFieldPatterns: [FarFieldPattern] = []
+    /// Set when far-field recording was asked for but could not be set up, so
+    /// the absence of a pattern is explained rather than just observed.
+    @Published public private(set) var farFieldWarning: String?
     @Published public private(set) var gridSize: (Int, Int, Int) = (0, 0, 0)
     /// True if the spectrum currently shown came from a run stopped early
     /// rather than one that ran its full step count.
@@ -632,6 +679,34 @@ public final class SimulationRunner: ObservableObject {
             factories.append { ext }
         }
 
+        // Far-field recording, when asked for. Registered before
+        // `calcECOperator()` like every other extension, and only when
+        // enabled — the surface DFT costs memory and per-step work that a
+        // run only interested in S11 should not pay.
+        let farFieldFrequencies = setup.farField.effectiveFrequencies(in: setup.frequency)
+        var farFieldExtension: NearFieldToFarFieldExtension?
+        var pendingFarFieldWarning: String?
+        if !farFieldFrequencies.isEmpty {
+            if let cells = NearFieldToFarFieldExtension.makeSurface(
+                op: op,
+                pmlCellCount: setup.boundaries.pmlCellCount
+            ) {
+                let ext = NearFieldToFarFieldExtension(
+                    name: "FarField",
+                    handle: handle,
+                    op: op,
+                    cells: cells,
+                    frequenciesHertz: farFieldFrequencies
+                )
+                farFieldExtension = ext
+                factories.append { ext }
+            } else {
+                pendingFarFieldWarning = """
+                No room for a far-field surface: the \(setup.boundaries.pmlCellCount)-cell absorbing                 boundary leaves too little of the \(op.numLines.0)x\(op.numLines.1)x\(op.numLines.2)                 grid to enclose the antenna. Increase the domain padding (half a wavelength or more on                 every side is typical), refine the mesh, or reduce the PML cell count.
+                """
+            }
+        }
+
         op.extensionFactories = factories
         op.calcECOperator()
         applyHardWallBoundaries(op: op, boundaries: setup.boundaries)
@@ -647,6 +722,8 @@ public final class SimulationRunner: ObservableObject {
         self.progress = 0
         self.s11DbAtCenter = nil
         self.s11Spectrum = []
+        self.farFieldPatterns = []
+        self.farFieldWarning = pendingFarFieldWarning
         self.wasStoppedEarly = false
 
         let maxSteps = UInt(setup.solver.maximumTimeSteps)
@@ -656,6 +733,8 @@ public final class SimulationRunner: ObservableObject {
         let impedanceOhm = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.impedanceOhm
         let spectrumPointCount = self.spectrumPointCount
         let portExtensionsSnapshot = portExtensions
+        let farFieldSnapshot = farFieldExtension
+        let farFieldAngleStep = setup.farField.effectiveAngularStepDegrees
         let runID = nextRunID
         let variableSnapshot = resolved.variables.values
         let gridSizeForHistory = op.numLines
@@ -703,6 +782,17 @@ public final class SimulationRunner: ObservableObject {
                 spectrumBuilder.append(S11Point(hertz: f, decibels: db))
             }
             let finalSpectrum = spectrumBuilder
+
+            // The transform runs once, after stepping: it is a pure function
+            // of the accumulated surface DFT, so it costs nothing during the
+            // run itself.
+            let patterns = Self.evaluateFarField(
+                farFieldSnapshot,
+                angleStepDegrees: farFieldAngleStep,
+                port: excited,
+                impedanceOhm: impedanceOhm
+            )
+
             let record = RunRecord(
                 id: runID,
                 timestamp: Date(),
@@ -721,11 +811,53 @@ public final class SimulationRunner: ObservableObject {
                 self.wasStoppedEarly = didStop
                 self.s11DbAtCenter = centerDb
                 self.s11Spectrum = finalSpectrum
+                self.farFieldPatterns = patterns
                 self.history.append(record)
             }
         }
         currentTask = task
         return task
+    }
+
+    /// Turns the recorded surface into one pattern per frequency.
+    ///
+    /// Accepted power and reflection come from the excited port at the same
+    /// frequency, which is what lets the pattern report gain rather than only
+    /// directivity. Both are optional: a run without usable port data still
+    /// yields a valid directivity pattern.
+    nonisolated private static func evaluateFarField(
+        _ recorder: NearFieldToFarFieldExtension?,
+        angleStepDegrees: Double,
+        port: LumpedPortExtension?,
+        impedanceOhm: Double
+    ) -> [FarFieldPattern] {
+        guard let recorder else { return [] }
+        let grid = NearFieldToFarFieldExtension.angleGrid(stepDegrees: angleStepDegrees)
+
+        return recorder.frequenciesHertz.indices.map { index in
+            let frequency = recorder.frequenciesHertz[index]
+            var accepted: Double?
+            var reflection: Double?
+
+            if let port {
+                let v = PortSpectrum.dft(time: port.timeSeconds, values: port.voltage, atHertz: frequency)
+                let i = PortSpectrum.dft(time: port.timeSeconds, values: port.current, atHertz: frequency)
+                // P_accepted = ½ Re(V · I*).
+                let power = 0.5 * (v.real * i.real + v.imag * i.imag)
+                if power > 0 { accepted = power }
+
+                let s11Db = PortSpectrum.s11(port: port, impedanceOhm: impedanceOhm, atHertz: frequency)
+                if s11Db.isFinite { reflection = pow(10, s11Db / 20) }
+            }
+
+            return recorder.pattern(
+                frequencyIndex: index,
+                thetaDegrees: grid.theta,
+                phiDegrees: grid.phi,
+                acceptedPowerWatts: accepted,
+                reflectionCoefficient: reflection
+            )
+        }
     }
 
     /// Maps `.electric`/`.magnetic` faces to a permanent hard wall (the

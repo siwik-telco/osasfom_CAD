@@ -44,6 +44,10 @@ public final class SceneController {
     private var entries: [UUID: BodyEntry] = [:]
     private var gridConfiguration: GridConfiguration?
     private var domainNode: SCNNode?
+    private var farFieldNode: SCNNode?
+    /// What the current far-field node was built from, so an unchanged
+    /// pattern doesn't rebuild its mesh on every scene sync.
+    private var farFieldSignature: Int?
     private var domainBounds: BodyBounds?
     private var portNodes: [UUID: SCNNode] = [:]
     private var portSignatures: [UUID: BodyBounds] = [:]
@@ -74,18 +78,33 @@ public final class SceneController {
         public var showGrid: Bool
         public var showDomain: Bool
         public var showPorts: Bool
+        public var showFarField: Bool
+        /// 0 hides the pattern entirely, 1 draws it solid. Separate from
+        /// `showFarField` so the surface can be faded back far enough to see
+        /// the geometry through it without being switched off and losing the
+        /// legend with it.
+        public var farFieldOpacity: Double
 
-        public init(showGrid: Bool = true, showDomain: Bool = true, showPorts: Bool = true) {
+        public init(
+            showGrid: Bool = true,
+            showDomain: Bool = true,
+            showPorts: Bool = true,
+            showFarField: Bool = true,
+            farFieldOpacity: Double = 0.85
+        ) {
             self.showGrid = showGrid
             self.showDomain = showDomain
             self.showPorts = showPorts
+            self.showFarField = showFarField
+            self.farFieldOpacity = farFieldOpacity
         }
     }
 
     public func sync(
         resolved: ResolvedModel,
         materials: [MaterialDefinition],
-        selectedBodyID: UUID?,
+        selectedBodyIDs: Set<UUID>,
+        farField: FarFieldMesh? = nil,
         options: ViewOptions
     ) {
         let materialsByID = Dictionary(
@@ -98,7 +117,7 @@ public final class SceneController {
         for body in resolved.bodies where body.isVisible {
             liveIDs.insert(body.id)
             let material = materialsByID[body.materialID] ?? MaterialLibrary.vacuum
-            update(body: body, material: material, isSelected: body.id == selectedBodyID)
+            update(body: body, material: material, isSelected: selectedBodyIDs.contains(body.id))
         }
 
         for (id, entry) in entries where !liveIDs.contains(id) {
@@ -110,6 +129,12 @@ public final class SceneController {
         syncGrid(for: resolved)
         syncDomain(resolved.simulation.domain, isVisible: options.showDomain)
         syncPorts(resolved.simulation.ports, isVisible: options.showPorts)
+        syncFarField(
+            farField,
+            isVisible: options.showFarField,
+            opacity: options.farFieldOpacity,
+            modelBounds: resolved.modelBounds
+        )
     }
 
     private func update(body: ResolvedBody, material: MaterialDefinition, isSelected: Bool) {
@@ -474,4 +499,54 @@ public final class SceneController {
         node.renderingOrder = -10
         return node
     }
+
+    // MARK: - Far field
+
+    /// Draws the radiation pattern centred on the model.
+    ///
+    /// The pattern is a shape, not a size — its physical radius is
+    /// meaningless — so it is scaled to the model it belongs to rather than
+    /// drawn at some absolute extent that would be invisible on one project
+    /// and swamp the geometry on the next.
+    private func syncFarField(
+        _ mesh: FarFieldMesh?,
+        isVisible: Bool,
+        opacity: Double,
+        modelBounds: BodyBounds?
+    ) {
+        // Fully transparent is the same as absent, and dropping the node
+        // keeps a faded-out pattern from still catching hit tests.
+        guard isVisible, opacity > 0.001, let mesh, !mesh.isEmpty else {
+            farFieldNode?.removeFromParentNode()
+            farFieldNode = nil
+            farFieldSignature = nil
+            return
+        }
+
+        var hasher = Hasher()
+        hasher.combine(mesh.vertices.count)
+        hasher.combine(mesh.peakDb)
+        hasher.combine(mesh.floorDb)
+        hasher.combine(mesh.radius)
+        let signature = hasher.finalize()
+
+        if farFieldSignature == signature, let node = farFieldNode {
+            node.position = SceneGeometryFactory.vector(modelBounds?.center ?? .zero)
+            // Opacity is a material tweak, not a reason to rebuild the mesh —
+            // dragging the slider must stay smooth.
+            node.geometry?.materials.first?.transparency = CGFloat(opacity)
+            return
+        }
+
+        farFieldNode?.removeFromParentNode()
+        let node = SCNNode(geometry: SceneGeometryFactory.makeFarFieldGeometry(mesh, opacity: opacity))
+        node.position = SceneGeometryFactory.vector(modelBounds?.center ?? .zero)
+        // Drawn after the solids and without writing depth, so the lobes read
+        // as a translucent shell around the antenna rather than hiding it.
+        node.renderingOrder = 10
+        scene.rootNode.addChildNode(node)
+        farFieldNode = node
+        farFieldSignature = signature
+    }
+
 }

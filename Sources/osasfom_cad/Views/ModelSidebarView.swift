@@ -38,7 +38,7 @@ struct ModelSidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            List(selection: $document.selectedBodyID) {
+            List(selection: $document.selectedBodyIDs) {
                 ForEach(document.state.bodies) { body in
                     BodyRow(
                         model: body,
@@ -50,8 +50,18 @@ struct ModelSidebarView: View {
                             }
                         }
                     )
-                    .tag(Optional(body.id))
+                    .tag(body.id)
                     .contextMenu {
+                        if document.canCombineSelectedBodies, document.selectedBodyIDs.contains(body.id) {
+                            Section(combineHeader) {
+                                ForEach(BooleanKind.allCases) { kind in
+                                    Button(kind.displayName) {
+                                        document.combineSelectedBodies(kind)
+                                    }
+                                }
+                            }
+                            Divider()
+                        }
                         Button("Duplicate") {
                             document.selectedBodyID = body.id
                             document.duplicateSelectedBody()
@@ -68,6 +78,10 @@ struct ModelSidebarView: View {
             }
             .listStyle(.inset)
 
+            if document.canCombineSelectedBodies {
+                combineBar
+            }
+
             HStack {
                 Text("\(document.state.bodies.count) bodies")
                 Spacer()
@@ -78,6 +92,39 @@ struct ModelSidebarView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
         }
+    }
+
+    /// Named so it is never a guess which body survives the combine.
+    private var combineHeader: String {
+        guard let target = document.combineTargetBody else { return "Combine" }
+        let others = document.orderedSelectedBodies.count - 1
+        return "Combine into “\(target.name)” (\(others) tool\(others == 1 ? "" : "s"))"
+    }
+
+    /// Appears only with two or more bodies selected — the gesture is
+    /// meaningless otherwise, and a permanently disabled row is just noise.
+    private var combineBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            Text(combineHeader)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            HStack(spacing: 6) {
+                ForEach(BooleanKind.allCases) { kind in
+                    Button {
+                        document.combineSelectedBodies(kind)
+                    } label: {
+                        Label(kind.displayName, systemImage: kind.symbolName)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .help(kind.summary)
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 4)
     }
 
     private func severity(for id: UUID) -> Diagnostic.Severity? {

@@ -11,6 +11,9 @@ import osasfom_cadRender
 /// coordinator, which SwiftUI keeps alive across view updates.
 struct SceneViewport: NSViewRepresentable {
     @ObservedObject var document: CADDocument
+    /// The radiation pattern to overlay, already meshed. `nil` when the last
+    /// run recorded none.
+    let farField: FarFieldMesh?
     let options: SceneController.ViewOptions
     /// Incremented by the toolbar to request a camera reframe. Because framing is
     /// explicit, an edit never moves the camera.
@@ -31,15 +34,15 @@ struct SceneViewport: NSViewRepresentable {
         // Rendering on demand: the old view ran a continuous 60 fps loop while
         // rebuilding the whole scene every update.
         view.rendersContinuously = false
-        view.onSelect = { [weak coordinator = context.coordinator] nodeName in
-            coordinator?.handleSelection(nodeName: nodeName)
+        view.onSelect = { [weak coordinator = context.coordinator] nodeName, extend in
+            coordinator?.handleSelection(nodeName: nodeName, extend: extend)
         }
         view.onFacePick = { [weak coordinator = context.coordinator] nodeName, worldPoint in
             coordinator?.handleFacePick(nodeName: nodeName, worldPoint: worldPoint)
         }
         view.isFacePicking = document.facePickRequest != nil
 
-        context.coordinator.sync(options: options)
+        context.coordinator.sync(farField: farField, options: options)
         context.coordinator.controller.frame(bounds: document.resolved.modelBounds)
         context.coordinator.lastFrameToken = frameRequestToken
         return view
@@ -47,7 +50,7 @@ struct SceneViewport: NSViewRepresentable {
 
     func updateNSView(_ nsView: PickingSceneView, context: Context) {
         context.coordinator.document = document
-        context.coordinator.sync(options: options)
+        context.coordinator.sync(farField: farField, options: options)
 
         if frameRequestToken != context.coordinator.lastFrameToken {
             context.coordinator.lastFrameToken = frameRequestToken
@@ -57,8 +60,8 @@ struct SceneViewport: NSViewRepresentable {
             nsView.pointOfView = context.coordinator.controller.cameraNode
         }
 
-        nsView.onSelect = { [weak coordinator = context.coordinator] nodeName in
-            coordinator?.handleSelection(nodeName: nodeName)
+        nsView.onSelect = { [weak coordinator = context.coordinator] nodeName, extend in
+            coordinator?.handleSelection(nodeName: nodeName, extend: extend)
         }
         nsView.onFacePick = { [weak coordinator = context.coordinator] nodeName, worldPoint in
             coordinator?.handleFacePick(nodeName: nodeName, worldPoint: worldPoint)
@@ -76,21 +79,33 @@ struct SceneViewport: NSViewRepresentable {
             self.document = document
         }
 
-        func sync(options: SceneController.ViewOptions) {
+        func sync(farField: FarFieldMesh?, options: SceneController.ViewOptions) {
             controller.sync(
                 resolved: document.resolved,
                 materials: document.state.materials,
-                selectedBodyID: document.selectedBodyID,
+                selectedBodyIDs: document.selectedBodyIDs,
+                farField: farField,
                 options: options
             )
         }
 
-        func handleSelection(nodeName: String?) {
+        /// `extend` is a shift/command click: it adds to (or removes from)
+        /// the selection rather than replacing it, so two bodies can be
+        /// picked in the viewport and combined without going to the list.
+        func handleSelection(nodeName: String?, extend: Bool) {
             guard let nodeName, let id = UUID(uuidString: nodeName) else {
-                document.selectedBodyID = nil
+                if !extend { document.selectedBodyIDs = [] }
                 return
             }
-            document.selectedBodyID = id
+            guard extend else {
+                document.selectedBodyID = id
+                return
+            }
+            if document.selectedBodyIDs.contains(id) {
+                document.selectedBodyIDs.remove(id)
+            } else {
+                document.selectedBodyIDs.insert(id)
+            }
         }
 
         /// Resolves a viewport click into a snap point on the clicked body's
@@ -118,7 +133,8 @@ struct SceneViewport: NSViewRepresentable {
 }
 
 final class PickingSceneView: SCNView {
-    var onSelect: ((String?) -> Void)?
+    /// (body id string or nil, whether the click extends the selection).
+    var onSelect: ((String?, Bool) -> Void)?
     /// Fires instead of `onSelect` while `isFacePicking` is true: (body id
     /// string, world-space point clicked on that body's surface).
     var onFacePick: ((String, Vec3) -> Void)?
@@ -153,7 +169,10 @@ final class PickingSceneView: SCNView {
                 onFacePick?(foundID, Vec3(x: Double(worldPoint.x), y: Double(worldPoint.y), z: Double(worldPoint.z)))
             }
         } else {
-            onSelect?(foundID)
+            // Shift or command extends, matching the body list and the
+            // rest of macOS.
+            let extend = event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.command)
+            onSelect?(foundID, extend)
         }
         super.mouseDown(with: event)
     }

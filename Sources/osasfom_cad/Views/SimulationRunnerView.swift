@@ -8,6 +8,11 @@ import osasfom_cadSolver
 struct SimulationRunnerView: View {
     @ObservedObject var document: CADDocument
     @ObservedObject var runner: SimulationRunner
+    /// Owned by the main view: the 3D overlay and its legend show the same
+    /// frequency and quantity as these plots, so the selection has to be one
+    /// value rather than one per view.
+    @Binding var farFieldFrequencyIndex: Int
+    @Binding var farFieldQuantity: FarFieldQuantity
 
     @State private var errorMessage: String?
     @State private var resultsTab: ResultsTab = .chart
@@ -27,6 +32,7 @@ struct SimulationRunnerView: View {
             if !runner.s11Spectrum.isEmpty {
                 resultsSection
             }
+            farFieldSection
             if !runner.history.isEmpty {
                 historySection
             }
@@ -184,15 +190,31 @@ struct SimulationRunnerView: View {
     }
 
     private var resultsChart: some View {
-        Chart(runner.s11Spectrum, id: \.hertz) { point in
+        s11Chart(runner.s11Spectrum, height: 180)
+    }
+
+    /// One S11 plot, with its axes pinned to the data.
+    ///
+    /// Left to itself Swift Charts picks a "nice" numeric domain anchored at
+    /// zero, so a 2–3 GHz sweep spent two thirds of the plot on frequencies
+    /// that were never simulated and squashed the resonance into a spike.
+    /// The swept range *is* the interesting range, so it is stated outright —
+    /// and the dB axis is derived too, so a dip deeper than the default
+    /// domain can't be clipped off the bottom.
+    @ViewBuilder
+    private func s11Chart(_ spectrum: [S11Point], height: CGFloat) -> some View {
+        let domain = S11PlotDomain(spectrum)
+        Chart(spectrum, id: \.hertz) { point in
             LineMark(
                 x: .value("Frequency", point.hertz / 1e9),
                 y: .value("S11", point.decibels)
             )
         }
+        .chartXScale(domain: domain.frequencyGHz)
+        .chartYScale(domain: domain.decibels)
         .chartXAxisLabel("GHz")
         .chartYAxisLabel("dB")
-        .frame(height: 180)
+        .frame(height: height)
     }
 
     private var resultsTable: some View {
@@ -218,6 +240,26 @@ struct SimulationRunnerView: View {
     /// that produced it — selecting one shows those values against the
     /// document's *current* ones, so a variable changed since that run is
     /// immediately visible rather than silently invalidating the old result.
+    /// Shown whenever there is a pattern to show, or a reason there isn't.
+    @ViewBuilder
+    private var farFieldSection: some View {
+        if let warning = runner.farFieldWarning {
+            Section("Far Field") {
+                Label(warning, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
+        } else if !runner.farFieldPatterns.isEmpty {
+            Section("Radiation Pattern") {
+                FarFieldPatternView(
+                    patterns: runner.farFieldPatterns,
+                    frequencyIndex: $farFieldFrequencyIndex,
+                    quantity: $farFieldQuantity
+                )
+            }
+        }
+    }
+
     private var historySection: some View {
         Section("Run History") {
             Table(runner.history.reversed(), selection: $selectedHistoryID) {
@@ -251,15 +293,9 @@ struct SimulationRunnerView: View {
 
     private func historyDetail(_ record: RunRecord) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Chart(record.s11Spectrum, id: \.hertz) { point in
-                LineMark(
-                    x: .value("Frequency", point.hertz / 1e9),
-                    y: .value("S11", point.decibels)
-                )
-            }
-            .chartXAxisLabel("GHz")
-            .chartYAxisLabel("dB")
-            .frame(height: 140)
+            // A stored run keeps its own swept range, which may differ from
+            // whatever the live chart is currently showing.
+            s11Chart(record.s11Spectrum, height: 140)
 
             Text("Variables at this run")
                 .font(.caption.bold())

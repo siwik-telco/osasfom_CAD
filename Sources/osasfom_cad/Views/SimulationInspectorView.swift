@@ -19,6 +19,7 @@ struct SimulationInspectorView: View {
             meshSection
             portsSection
             monitorsSection
+            farFieldSection
             solverSection
         }
         .formStyle(.grouped)
@@ -394,6 +395,105 @@ struct SimulationInspectorView: View {
     }
 
     // MARK: - Solver
+
+    /// Far-field recording is opt-in and frequency-explicit, because the
+    /// transform accumulates while the run steps — unlike the S11 sweep it
+    /// cannot be re-evaluated afterwards, so the choice has to be made here.
+    private var farFieldSection: some View {
+        let settings = document.state.simulation.farField
+        return Section {
+            Toggle(
+                "Record far field",
+                isOn: document.simulationBinding(
+                    \.farField.isEnabled,
+                    actionName: "Toggle Far Field",
+                    field: "farField.enabled"
+                )
+            )
+
+            if settings.isEnabled {
+                ForEach(Array(settings.frequenciesHertz.enumerated()), id: \.offset) { index, value in
+                    HStack {
+                        Text("Frequency \(index + 1)").foregroundStyle(.secondary)
+                        Spacer()
+                        TextField(
+                            "",
+                            value: frequencyBinding(index: index),
+                            format: FieldFormat.decimal
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 80)
+                        Text("GHz").font(.caption).foregroundStyle(.secondary)
+                        Button {
+                            document.updateSimulation(actionName: "Remove Far-Field Frequency") { simulation in
+                                guard simulation.farField.frequenciesHertz.indices.contains(index) else { return }
+                                simulation.farField.frequenciesHertz.remove(at: index)
+                            }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                Button {
+                    document.updateSimulation(actionName: "Add Far-Field Frequency") { simulation in
+                        simulation.farField.frequenciesHertz.append(simulation.frequency.centerHertz)
+                    }
+                } label: {
+                    Label("Add frequency", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+
+                if settings.frequenciesHertz.isEmpty {
+                    Text("No frequency listed — the band centre (\(FrequencyFormatter.string(hertz: document.state.simulation.frequency.centerHertz))) will be recorded.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Angular step").foregroundStyle(.secondary)
+                    Spacer()
+                    TextField(
+                        "",
+                        value: document.simulationBinding(
+                            \.farField.angularStepDegrees,
+                            actionName: "Edit Far Field",
+                            field: "farField.step"
+                        ),
+                        format: FieldFormat.decimal
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    Text("°").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Far Field")
+        } footer: {
+            Text("Recorded on a surface around the model while the run steps, so the frequencies must be chosen before running. The surface needs room between the antenna and the absorbing boundary — allow at least half a wavelength of domain padding.")
+                .font(.caption)
+        }
+    }
+
+    /// Stored in hertz, edited in GHz.
+    private func frequencyBinding(index: Int) -> Binding<Double> {
+        Binding(
+            get: {
+                let list = document.state.simulation.farField.frequenciesHertz
+                return list.indices.contains(index) ? list[index] / 1e9 : 0
+            },
+            set: { newValue in
+                document.updateSimulation(
+                    actionName: "Edit Far-Field Frequency",
+                    coalescingKey: "farField.frequency.\(index)"
+                ) { simulation in
+                    guard simulation.farField.frequenciesHertz.indices.contains(index) else { return }
+                    simulation.farField.frequenciesHertz[index] = newValue * 1e9
+                }
+            }
+        )
+    }
 
     private var solverSection: some View {
         Section("Solver") {

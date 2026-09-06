@@ -597,6 +597,47 @@ public struct SolverSettings: Codable, Hashable, Sendable {
 /// This existed nowhere before, which meant a body-only export could not
 /// actually be run. It lives in the model — not the UI — so it is versioned,
 /// validated and exported alongside the geometry.
+/// What a far-field run records.
+///
+/// Off by default and deliberately explicit about *which* frequencies: the
+/// transform accumulates a running DFT of the fields on a closed surface
+/// while the run steps, so unlike the S11 sweep it cannot be re-evaluated at
+/// a new frequency afterwards. Changing this list means running again.
+public struct FarFieldSettings: Codable, Hashable, Sendable {
+    public var isEnabled: Bool
+    /// Frequencies to record, in hertz. Empty with `isEnabled` means "the
+    /// band centre", so the checkbox alone is enough to get a useful result.
+    public var frequenciesHertz: [Double]
+    /// Angular sampling of the pattern sphere, degrees. 5° gives 37 x 72
+    /// directions, which is smooth enough to read and cheap to evaluate;
+    /// the cost here is the post-run transform, not the run itself.
+    public var angularStepDegrees: Double
+
+    public init(
+        isEnabled: Bool = false,
+        frequenciesHertz: [Double] = [],
+        angularStepDegrees: Double = 5
+    ) {
+        self.isEnabled = isEnabled
+        self.frequenciesHertz = frequenciesHertz
+        self.angularStepDegrees = angularStepDegrees
+    }
+
+    /// The frequencies actually recorded, falling back to the band centre.
+    public func effectiveFrequencies(in range: FrequencyRange) -> [Double] {
+        guard isEnabled else { return [] }
+        let requested = frequenciesHertz.filter { $0 > 0 }
+        guard !requested.isEmpty else { return [range.centerHertz] }
+        return requested.sorted()
+    }
+
+    /// Clamped to a range that stays useful: below 1° the transform gets slow
+    /// for no visible gain, above 30° the pattern stops resembling a surface.
+    public var effectiveAngularStepDegrees: Double {
+        min(max(angularStepDegrees, 1), 30)
+    }
+}
+
 public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
     public var frequency: FrequencyRange
     public var domain: DomainSettings
@@ -606,6 +647,7 @@ public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
     public var ports: [SimulationPort]
     public var monitors: [FieldMonitor]
     public var solver: SolverSettings
+    public var farField: FarFieldSettings
 
     public init(
         frequency: FrequencyRange = .defaultRange,
@@ -615,7 +657,8 @@ public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
         excitation: Excitation = Excitation(),
         ports: [SimulationPort] = [],
         monitors: [FieldMonitor] = [],
-        solver: SolverSettings = SolverSettings()
+        solver: SolverSettings = SolverSettings(),
+        farField: FarFieldSettings = FarFieldSettings()
     ) {
         self.frequency = frequency
         self.domain = domain
@@ -625,6 +668,26 @@ public struct SimulationSetup: Codable, Hashable, Sendable, ExpressionWalkable {
         self.ports = ports
         self.monitors = monitors
         self.solver = solver
+        self.farField = farField
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case frequency, domain, boundaries, mesh, excitation, ports, monitors, solver, farField
+    }
+
+    /// Hand-written so a project written before far-field settings existed
+    /// still loads, rather than failing on the missing key.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.frequency = try container.decode(FrequencyRange.self, forKey: .frequency)
+        self.domain = try container.decode(DomainSettings.self, forKey: .domain)
+        self.boundaries = try container.decode(BoundarySettings.self, forKey: .boundaries)
+        self.mesh = try container.decode(MeshSettings.self, forKey: .mesh)
+        self.excitation = try container.decode(Excitation.self, forKey: .excitation)
+        self.ports = try container.decode([SimulationPort].self, forKey: .ports)
+        self.monitors = try container.decode([FieldMonitor].self, forKey: .monitors)
+        self.solver = try container.decode(SolverSettings.self, forKey: .solver)
+        self.farField = try container.decodeIfPresent(FarFieldSettings.self, forKey: .farField) ?? FarFieldSettings()
     }
 
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {

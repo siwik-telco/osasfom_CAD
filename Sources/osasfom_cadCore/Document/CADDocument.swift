@@ -24,8 +24,40 @@ public final class CADDocument: ObservableObject {
     @Published public private(set) var state: CADModelState
     /// Derived geometry and diagnostics. Recomputed on every accepted mutation.
     @Published public private(set) var resolved: ResolvedModel
-    @Published public var selectedBodyID: UUID?
+    /// The selected bodies. Multi-selection exists so two bodies can be
+    /// combined with a boolean; everything else in the app works on one.
+    @Published public var selectedBodyIDs: Set<UUID> = [] {
+        didSet { recordSelectionOrder(previous: oldValue) }
+    }
     @Published public var selectedPortID: UUID?
+
+    /// Selection in the order it was made. A boolean keeps the body picked
+    /// *first* — the blank, in CAD terms — so "cylinder 1, then cylinder 2,
+    /// subtract" means cylinder 1 with a cylinder-2-shaped hole, regardless of
+    /// how the two sit in the body list.
+    ///
+    /// SwiftUI hands over an unordered set, so the order is reconstructed by
+    /// diffing. Bodies arriving together (a shift-click range, or a restored
+    /// selection) have no pick order to recover and fall back to list order.
+    @Published public private(set) var selectionOrder: [UUID] = []
+
+    /// The single selected body, for everything that acts on one. Reading it
+    /// with several selected gives the first one picked.
+    public var selectedBodyID: UUID? {
+        get { selectionOrder.first ?? selectedBodyIDs.first }
+        set { selectedBodyIDs = newValue.map { [$0] } ?? [] }
+    }
+
+    private func recordSelectionOrder(previous: Set<UUID>) {
+        var order = selectionOrder.filter { selectedBodyIDs.contains($0) }
+        let added = selectedBodyIDs.subtracting(previous)
+        if !added.isEmpty {
+            for body in state.bodies where added.contains(body.id) {
+                order.append(body.id)
+            }
+        }
+        selectionOrder = order
+    }
     /// Non-nil while the viewport is waiting for the user to click a body's
     /// face to set one terminal of a lumped port. The view layer arms this,
     /// the viewport clears it once a face is picked (or the user cancels).
@@ -84,8 +116,9 @@ public final class CADDocument: ObservableObject {
     }
 
     private func refreshSelection() {
-        if let selectedBodyID, state.bodyIndex(id: selectedBodyID) == nil {
-            self.selectedBodyID = nil
+        let surviving = selectedBodyIDs.filter { state.bodyIndex(id: $0) != nil }
+        if surviving != selectedBodyIDs {
+            selectedBodyIDs = surviving
         }
         if let selectedPortID, !state.simulation.ports.contains(where: { $0.id == selectedPortID }) {
             self.selectedPortID = nil
@@ -114,6 +147,11 @@ public final class CADDocument: ObservableObject {
     public var selectedBody: CADBody? {
         guard let selectedBodyID else { return nil }
         return state.body(id: selectedBodyID)
+    }
+
+    /// The selected bodies in the order they were picked.
+    public var orderedSelectedBodies: [CADBody] {
+        selectionOrder.compactMap { state.body(id: $0) }
     }
 
     public var selectedResolvedBody: ResolvedBody? {
@@ -218,6 +256,56 @@ public final class CADDocument: ObservableObject {
     }
 
     // MARK: - Boolean operations
+
+    /// Whether `combineSelectedBodies` has something to do.
+    public var canCombineSelectedBodies: Bool { orderedSelectedBodies.count >= 2 }
+
+    /// The body a combine would keep: the first one selected.
+    public var combineTargetBody: CADBody? { orderedSelectedBodies.first }
+
+    /// Promotes `id` to the body a combine would keep, leaving the rest of
+    /// the selection alone — so picking in the wrong order can be corrected
+    /// in place instead of deselecting everything and starting again.
+    public func makeCombineTarget(_ id: UUID) {
+        guard selectedBodyIDs.contains(id), selectionOrder.first != id else { return }
+        selectionOrder = [id] + selectionOrder.filter { $0 != id }
+    }
+
+    /// Combines the selected bodies into the first one selected.
+    ///
+    /// The other bodies are consumed — their shape and placement move into
+    /// the target's boolean history and they leave the body list. Nothing is
+    /// baked: each consumed shape stays a live parametric primitive in the
+    /// target's inspector, so a hole can still be resized by its own
+    /// expression afterwards. Undo puts the originals back.
+    ///
+    /// A consumed body's material and priority are dropped, because the
+    /// result is one body and one body has one material — the target's.
+    @discardableResult
+    public func combineSelectedBodies(_ kind: BooleanKind) -> UUID? {
+        let ordered = orderedSelectedBodies
+        guard ordered.count >= 2, let target = ordered.first else { return nil }
+        let tools = Array(ordered.dropFirst())
+        let toolIDs = Set(tools.map(\.id))
+
+        let actionName = tools.count == 1
+            ? "\(kind.displayName) \(tools[0].name)"
+            : "\(kind.displayName) \(tools.count) Bodies"
+
+        perform(actionName) { state in
+            guard let index = state.bodyIndex(id: target.id) else { return }
+            // Appended before the removal, so the target's index is still valid.
+            for tool in tools {
+                state.bodies[index].booleans.append(
+                    BooleanOperation(kind: kind, primitive: tool.primitive, transform: tool.transform)
+                )
+            }
+            state.bodies.removeAll { toolIDs.contains($0.id) }
+        }
+
+        selectedBodyIDs = [target.id]
+        return target.id
+    }
 
     /// Appends a boolean step to a body. The tool starts as a default
     /// primitive of `primitiveKind`, which the inspector then edits in place —

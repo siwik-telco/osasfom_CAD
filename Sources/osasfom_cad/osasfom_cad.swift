@@ -70,6 +70,9 @@ struct osasfom_cad: App {
 
             Button("Export STL…") { postDocumentCommand(.exportSTL) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
+
+            Button("Export Return Loss…") { postDocumentCommand(.exportResults) }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
         }
 
         CommandGroup(after: .sidebar) {

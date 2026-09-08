@@ -13,6 +13,7 @@ enum DocumentCommand {
     case exportSTL
     case zoomToFit
     case showWelcome
+    case exportResults
 }
 
 extension Notification.Name {
@@ -56,6 +57,18 @@ enum ProjectPanels {
         panel.nameFieldStringValue = "\(suggestedName)-fdtd.json"
         panel.canCreateDirectories = true
         panel.message = "Export the resolved FDTD setup. All lengths are in metres."
+        guard panel.runModal() == .OK else { return nil }
+        return panel.url
+    }
+
+    /// `fileExtension` comes from the chosen results format, so the panel
+    /// offers the right type rather than a generic one.
+    static func chooseResultsExportLocation(suggestedName: String, fileExtension: String) -> URL? {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: fileExtension) ?? .plainText]
+        panel.nameFieldStringValue = suggestedName
+        panel.canCreateDirectories = true
+        panel.message = "Export the return loss. Frequencies are in hertz."
         guard panel.runModal() == .OK else { return nil }
         return panel.url
     }

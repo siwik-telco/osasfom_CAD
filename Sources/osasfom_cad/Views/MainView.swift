@@ -356,6 +356,9 @@ struct MainView: View {
         // Owned by RootView, which is what decides whether the window shows
         // the welcome screen or the editor.
         case .showWelcome: break
+        // Handled by the Run tab, which is what holds the results and the
+        // history selection the export acts on.
+        case .exportResults: break
         }
     }
 

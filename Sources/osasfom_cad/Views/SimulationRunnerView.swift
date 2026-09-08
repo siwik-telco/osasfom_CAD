@@ -20,6 +20,7 @@ struct SimulationRunnerView: View {
     @State private var comparisonSelection = Set<Int>()
     /// Marker frequencies dropped on the comparison chart, in hertz.
     @State private var comparisonMarkers: [Double] = []
+    @State private var exportFormat: ResultsExporter.Format = .csv
     @State private var plotMinGHzText: String = ""
     @State private var plotMaxGHzText: String = ""
 
@@ -42,6 +43,10 @@ struct SimulationRunnerView: View {
         }
         .formStyle(.grouped)
         .onAppear { runner.loadHistory(for: document.fileURL) }
+        .onReceive(NotificationCenter.default.publisher(for: .cadDocumentCommand)) { notification in
+            guard case .exportResults? = notification.object as? DocumentCommand else { return }
+            exportResults()
+        }
         .onChange(of: document.fileURL) { url in
             // Swapping projects swaps the stored history with it, so runs from
             // one model never show up under another.
@@ -154,6 +159,8 @@ struct SimulationRunnerView: View {
             }
 
             plotRangeControl
+            Divider()
+            exportControls
 
             if let center = runner.s11DbAtCenter {
                 LabeledContent("At band center") {
@@ -268,6 +275,93 @@ struct SimulationRunnerView: View {
                     quantity: $farFieldQuantity
                 )
             }
+        }
+    }
+
+    /// What the export acts on: the selected runs, or the live result when
+    /// nothing is selected. Exporting "whatever is on screen" is what a user
+    /// means by Export.
+    private var runsToExport: [RunRecord] {
+        let selected = selectedRuns
+        guard selected.isEmpty else { return selected }
+        return runner.history.suffix(1)
+    }
+
+    @ViewBuilder
+    private var exportControls: some View {
+        if !runsToExport.isEmpty {
+            HStack {
+                Picker("Format", selection: $exportFormat) {
+                    ForEach(ResultsExporter.Format.allCases) { format in
+                        Text(format.displayName).tag(format)
+                    }
+                }
+                .fixedSize()
+
+                Spacer()
+
+                Button {
+                    exportResults()
+                } label: {
+                    Label(exportButtonTitle, systemImage: "square.and.arrow.up")
+                }
+                .disabled(!exportFormat.supportsMultipleRuns && runsToExport.count > 1)
+            }
+
+            if !exportFormat.supportsMultipleRuns && runsToExport.count > 1 {
+                Text("Touchstone holds one network per file. Select a single run, or export CSV to compare several.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var exportButtonTitle: String {
+        let count = runsToExport.count
+        return count == 1 ? "Export Return Loss…" : "Export \(count) Runs…"
+    }
+
+    private func exportResults() {
+        let runs = runsToExport
+        guard !runs.isEmpty else {
+            errorMessage = "There are no results to export yet. Run a simulation first."
+            return
+        }
+        guard exportFormat.supportsMultipleRuns || runs.count == 1 else {
+            errorMessage = ResultsExporter.Format.touchstone.displayName
+                + " holds one network per file. Select a single run, or export CSV."
+            return
+        }
+
+        let text: String
+        do {
+            switch exportFormat {
+            case .csv:
+                text = ResultsExporter.csv(runs: runs, labels: RunComparison.labels(for: runs))
+            case .touchstone:
+                text = try ResultsExporter.touchstone(
+                    run: runs[0],
+                    referenceOhm: document.state.simulation.ports.first?.impedanceOhm ?? 50
+                )
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        guard let url = ProjectPanels.chooseResultsExportLocation(
+            suggestedName: ResultsExporter.suggestedFileName(
+                projectName: document.displayName,
+                runs: runs,
+                format: exportFormat
+            ),
+            fileExtension: exportFormat.fileExtension
+        ) else { return }
+
+        do {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            errorMessage = "Could not write \(url.lastPathComponent): \(error.localizedDescription)"
         }
     }
 

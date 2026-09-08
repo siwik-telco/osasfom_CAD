@@ -404,17 +404,47 @@ public enum PortSpectrum {
 
     /// S11 dla portu jednoportowego wzbudzanego: a = (V+Z0 I)/2/sqrt(Z0),
     /// b = (V-Z0 I)/2/sqrt(Z0), S11 = b/a.
-    public static func s11(port: LumpedPortExtension, impedanceOhm z0: Double, atHertz f: Double) -> Double {
+    /// Complex reflection coefficient Γ = b/a at `f`.
+    ///
+    /// The full complex value, not just its magnitude: phase is what makes a
+    /// result usable in an RF tool — de-embedding, cascading and impedance
+    /// all need it, and a Touchstone file carrying a fabricated 0° would be
+    /// worse than no file at all.
+    public static func reflection(
+        port: LumpedPortExtension,
+        impedanceOhm z0: Double,
+        atHertz f: Double
+    ) -> (real: Double, imaginary: Double)? {
         let v = dft(time: port.timeSeconds, values: port.voltage, atHertz: f)
         let i = dft(time: port.timeSeconds, values: port.current, atHertz: f)
         let aRe = (v.real + z0 * i.real) / 2, aIm = (v.imag + z0 * i.imag) / 2
         let bRe = (v.real - z0 * i.real) / 2, bIm = (v.imag - z0 * i.imag) / 2
+
         let aMagSq = aRe * aRe + aIm * aIm
-        guard aMagSq > 0 else { return .infinity }
-        // |b/a| w dB
-        let bMag = (bRe * bRe + bIm * bIm).squareRoot()
-        let aMag = aMagSq.squareRoot()
-        return 20 * log10(bMag / aMag)
+        guard aMagSq > 0 else { return nil }
+
+        // b/a = b·conj(a) / |a|²
+        return (
+            real: (bRe * aRe + bIm * aIm) / aMagSq,
+            imaginary: (bIm * aRe - bRe * aIm) / aMagSq
+        )
+    }
+
+    /// |S11| in dB.
+    public static func s11(port: LumpedPortExtension, impedanceOhm z0: Double, atHertz f: Double) -> Double {
+        guard let gamma = reflection(port: port, impedanceOhm: z0, atHertz: f) else { return .infinity }
+        let magnitude = (gamma.real * gamma.real + gamma.imaginary * gamma.imaginary).squareRoot()
+        return 20 * log10(magnitude)
+    }
+
+    /// Phase of S11 in degrees, the companion to `s11`.
+    public static func s11PhaseDegrees(
+        port: LumpedPortExtension,
+        impedanceOhm z0: Double,
+        atHertz f: Double
+    ) -> Double? {
+        guard let gamma = reflection(port: port, impedanceOhm: z0, atHertz: f) else { return nil }
+        return atan2(gamma.imaginary, gamma.real) * 180 / .pi
     }
 }
 
@@ -424,6 +454,16 @@ public enum PortSpectrum {
 public struct S11Point: Hashable, Codable, Sendable {
     public let hertz: Double
     public let decibels: Double
+    /// Phase of S11 in degrees. Optional because runs recorded before phase
+    /// was kept have none, and a Touchstone export must say so rather than
+    /// invent it.
+    public let phaseDegrees: Double?
+
+    public init(hertz: Double, decibels: Double, phaseDegrees: Double? = nil) {
+        self.hertz = hertz
+        self.decibels = decibels
+        self.phaseDegrees = phaseDegrees
+    }
 }
 
 /// Axis domains for plotting an S11 sweep, derived from the points actually
@@ -690,7 +730,13 @@ public final class SimulationRunner: ObservableObject {
         spectrum.reserveCapacity(count)
         for i in 0..<count {
             let f = clampedMin + (clampedMax - clampedMin) * Double(i) / Double(count - 1)
-            spectrum.append(S11Point(hertz: f, decibels: PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f)))
+            spectrum.append(
+                S11Point(
+                    hertz: f,
+                    decibels: PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f),
+                    phaseDegrees: PortSpectrum.s11PhaseDegrees(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f)
+                )
+            )
         }
         s11Spectrum = spectrum
         s11DbAtCenter = PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: (clampedMin + clampedMax) / 2)
@@ -899,7 +945,8 @@ public final class SimulationRunner: ObservableObject {
                 let f = frequency.minimumHertz
                     + (frequency.maximumHertz - frequency.minimumHertz) * Double(i) / Double(count - 1)
                 let db = PortSpectrum.s11(port: excited, impedanceOhm: impedanceOhm, atHertz: f)
-                spectrumBuilder.append(S11Point(hertz: f, decibels: db))
+                let phase = PortSpectrum.s11PhaseDegrees(port: excited, impedanceOhm: impedanceOhm, atHertz: f)
+                spectrumBuilder.append(S11Point(hertz: f, decibels: db, phaseDegrees: phase))
             }
             let finalSpectrum = spectrumBuilder
 

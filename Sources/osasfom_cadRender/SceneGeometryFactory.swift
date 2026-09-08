@@ -115,7 +115,11 @@ public enum SceneGeometryFactory {
             return SCNVector3Zero
 
         case .cylinder(_, _, _, let axis):
-            return vector(axis.rotationFromYAxisDegrees)
+            // `eulerAngles` is radians. Passing the degrees straight through
+            // put an X- or Z-aligned cylinder at 116.6° instead of 90° —
+            // 90 radians wrapped — while a Y-aligned one looked fine because
+            // its rotation is zero in either unit, which is how it survived.
+            return degreesToRadians(axis.rotationFromYAxisDegrees)
 
         case .sheet(let size, let normal):
             guard size[normal] == 0 else { return SCNVector3Zero }

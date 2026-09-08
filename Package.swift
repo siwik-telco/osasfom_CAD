@@ -56,6 +56,10 @@ let package = Package(
             dependencies: ["osasfom_cadCore"]
         ),
         .testTarget(
+            name: "osasfom_cadRenderTests",
+            dependencies: ["osasfom_cadCore", "osasfom_cadRender"]
+        ),
+        .testTarget(
             name: "osasfom_cadSolverTests",
             dependencies: ["osasfom_cadCore", "osasfom_cadSolver"]
         )

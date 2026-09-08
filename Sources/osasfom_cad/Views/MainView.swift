@@ -353,6 +353,9 @@ struct MainView: View {
         case .exportSolverDeck: exportSolverDeck()
         case .exportSTL: exportSTL()
         case .zoomToFit: frameRequestToken += 1
+        // Owned by RootView, which is what decides whether the window shows
+        // the welcome screen or the editor.
+        case .showWelcome: break
         }
     }
 

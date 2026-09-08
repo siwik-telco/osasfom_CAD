@@ -20,8 +20,7 @@ struct osasfom_cad: App {
 
     var body: some Scene {
         WindowGroup {
-            MainView(document: document)
-                .frame(minWidth: 1_180, minHeight: 780)
+            RootView(document: document)
                 .onAppear {
                     NSApp.activate(ignoringOtherApps: true)
                 }
@@ -53,6 +52,8 @@ struct osasfom_cad: App {
 
             Button("Open…") { postDocumentCommand(.open) }
                 .keyboardShortcut("o", modifiers: .command)
+
+            Button("Welcome Screen") { postDocumentCommand(.showWelcome) }
 
             Divider()
 

@@ -16,9 +16,12 @@ struct SimulationRunnerView: View {
 
     @State private var errorMessage: String?
     @State private var resultsTab: ResultsTab = .chart
+    /// Runs picked in the history table. One inspects, several compare.
+    @State private var comparisonSelection = Set<Int>()
+    /// Marker frequencies dropped on the comparison chart, in hertz.
+    @State private var comparisonMarkers: [Double] = []
     @State private var plotMinGHzText: String = ""
     @State private var plotMaxGHzText: String = ""
-    @State private var selectedHistoryID: Int?
 
     private enum ResultsTab: String, CaseIterable, Identifiable {
         case chart = "Chart"
@@ -38,6 +41,14 @@ struct SimulationRunnerView: View {
             }
         }
         .formStyle(.grouped)
+        .onAppear { runner.loadHistory(for: document.fileURL) }
+        .onChange(of: document.fileURL) { url in
+            // Swapping projects swaps the stored history with it, so runs from
+            // one model never show up under another.
+            comparisonSelection = []
+            comparisonMarkers = []
+            runner.loadHistory(for: url)
+        }
         .onChange(of: runner.plotRange) { range in
             guard let range else { return }
             plotMinGHzText = String(format: "%.3f", range.minimumHertz / 1e9)
@@ -262,7 +273,7 @@ struct SimulationRunnerView: View {
 
     private var historySection: some View {
         Section("Run History") {
-            Table(runner.history.reversed(), selection: $selectedHistoryID) {
+            Table(runner.history.reversed(), selection: $comparisonSelection) {
                 TableColumn("Run") { record in
                     Text("#\(record.id)")
                 }
@@ -285,8 +296,81 @@ struct SimulationRunnerView: View {
             }
             .frame(minHeight: 120, maxHeight: 220)
 
-            if let record = runner.history.first(where: { $0.id == selectedHistoryID }) {
+            HStack {
+                Text(selectionHint)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !comparisonSelection.isEmpty {
+                    Button("Deselect") { comparisonSelection = [] }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                }
+                if !runner.history.isEmpty {
+                    Button("Clear History", role: .destructive) {
+                        comparisonSelection = []
+                        runner.clearHistory()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.caption)
+                }
+            }
+
+            if selectedRuns.count == 1, let record = selectedRuns.first {
                 historyDetail(record)
+            } else if selectedRuns.count > 1 {
+                comparisonDetail
+            }
+        }
+    }
+
+    /// Runs picked for comparison, in the order they were run so the legend
+    /// reads oldest to newest.
+    private var selectedRuns: [RunRecord] {
+        runner.history.filter { comparisonSelection.contains($0.id) }
+    }
+
+    private var selectionHint: String {
+        switch selectedRuns.count {
+        case 0: return "Select a run to inspect it, or several to compare."
+        case 1: return "Select another run to overlay them."
+        default: return "\(selectedRuns.count) runs overlaid."
+        }
+    }
+
+    /// Several runs at once: one chart with every trace, plus the radiation
+    /// patterns of whichever of them recorded one.
+    private var comparisonDetail: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            RunComparisonChart(runs: selectedRuns, markers: $comparisonMarkers)
+
+            Text("Click the chart to drop a marker and read every trace at that frequency.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if selectedRuns.contains(where: { !$0.farFieldPatterns.isEmpty }) {
+                Divider()
+                HStack {
+                    Text("Radiation Pattern").font(.callout.bold())
+                    Spacer()
+                    Picker("", selection: $farFieldQuantity) {
+                        ForEach(FarFieldQuantity.allCases) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 260)
+                }
+                FarFieldComparisonView(
+                    runs: selectedRuns,
+                    quantity: farFieldQuantity,
+                    thetaCutDegrees: 90,
+                    dynamicRangeDb: 40
+                )
+                Text("The 3D pattern in the viewport always shows the most recent run.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

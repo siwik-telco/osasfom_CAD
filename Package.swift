@@ -45,7 +45,11 @@ let package = Package(
         ),
         .executableTarget(
             name: "osasfom_cad",
-            dependencies: ["osasfom_cadCore", "osasfom_cadRender", "osasfom_cadSolver"]
+            dependencies: ["osasfom_cadCore", "osasfom_cadRender", "osasfom_cadSolver"],
+            // SwiftPM only bundles resources that live inside the target's own
+            // directory, so the launch logo is kept here rather than read from
+            // the repository's top-level Images folder.
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "osasfom_cadCoreTests",

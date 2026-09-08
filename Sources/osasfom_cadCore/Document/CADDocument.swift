@@ -411,6 +411,21 @@ public final class CADDocument: ObservableObject {
         deleteVariables(at: IndexSet(integer: index))
     }
 
+    /// Deletes the variable only if nothing refers to it, and reports how
+    /// many references blocked it — 0 means it was deleted.
+    ///
+    /// The rule lives here rather than in the panel so there is one place that
+    /// decides it. A view-only guard is easy to walk around: the list's
+    /// swipe-to-delete did exactly that until this existed.
+    @discardableResult
+    public func deleteVariableIfUnused(_ id: UUID) -> Int {
+        guard let variable = state.variable(id: id) else { return 0 }
+        let uses = referencesToVariable(named: variable.trimmedName)
+        guard uses == 0 else { return uses }
+        deleteVariable(id)
+        return 0
+    }
+
     /// Which bodies, ports and settings would break if this variable went away.
     public func referencesToVariable(named name: String) -> Int {
         guard !name.isEmpty else { return 0 }

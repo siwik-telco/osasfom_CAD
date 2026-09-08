@@ -12,6 +12,7 @@ enum DocumentCommand {
     case exportSolverDeck
     case exportSTL
     case zoomToFit
+    case showWelcome
 }
 
 extension Notification.Name {

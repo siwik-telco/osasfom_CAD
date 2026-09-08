@@ -319,4 +319,125 @@ final class DocumentTests: XCTestCase {
         XCTAssertFalse(document.canUndo, "resetting starts a clean undo history")
         XCTAssertFalse(document.canRedo)
     }
+
+    // MARK: - Deleting variables
+
+    /// Deleting a variable nothing uses is unremarkable; the point of the test
+    /// is that it is a normal, undoable edit rather than a special case.
+    @MainActor
+    func testDeletingAnUnusedVariableRemovesItAndIsUndoable() {
+        let document = CADDocument(state: CADModelState(name: "Vars"))
+        let id = document.addVariable()
+        document.updateVariable(id, actionName: "Name") { $0.name = "spare" }
+
+        XCTAssertEqual(document.referencesToVariable(named: "spare"), 0)
+        XCTAssertEqual(document.deleteVariableIfUnused(id), 0, "nothing blocks it")
+        XCTAssertNil(document.state.variable(id: id))
+
+        document.undo()
+        XCTAssertNotNil(document.state.variable(id: id), "undo brings the variable back")
+    }
+
+    /// The rule the panel enforces: a variable something still refers to
+    /// cannot be removed, because removing it would turn every one of those
+    /// expressions into an "unknown name" error.
+    @MainActor
+    func testAReferencedVariableCannotBeDeleted() {
+        var state = CADModelState(name: "Vars")
+        let width = CADVariable(name: "w", expression: Expression(40))
+        state.variables = [width]
+        state.bodies = [
+            CADBody(
+                name: "Patch",
+                primitive: .box(BoxSpec(
+                    beginX: Expression(source: "-w/2"), endX: Expression(source: "w/2"),
+                    beginY: Expression(-5), endY: Expression(5),
+                    beginZ: Expression(0), endZ: Expression(1)
+                ))
+            )
+        ]
+        let document = CADDocument(state: state)
+
+        let blocking = document.deleteVariableIfUnused(width.id)
+
+        XCTAssertEqual(blocking, 2, "both begin and end use it")
+        XCTAssertNotNil(document.state.variable(id: width.id), "the variable survives")
+        XCTAssertEqual(document.resolved.errorCount, 0, "and nothing broke")
+    }
+
+    /// Once the last user is gone the same variable deletes cleanly, so the
+    /// rule releases rather than trapping a variable forever.
+    @MainActor
+    func testAVariableBecomesDeletableOnceItsLastUserIsGone() {
+        var state = CADModelState(name: "Vars")
+        let width = CADVariable(name: "w", expression: Expression(40))
+        state.variables = [width]
+        let body = CADBody(
+            name: "Patch",
+            primitive: .box(BoxSpec(
+                beginX: Expression(source: "-w/2"), endX: Expression(source: "w/2"),
+                beginY: Expression(-5), endY: Expression(5),
+                beginZ: Expression(0), endZ: Expression(1)
+            ))
+        )
+        state.bodies = [body]
+        let document = CADDocument(state: state)
+
+        XCTAssertGreaterThan(document.deleteVariableIfUnused(width.id), 0)
+
+        document.deleteBody(body.id)
+        XCTAssertEqual(document.deleteVariableIfUnused(width.id), 0, "now unused")
+        XCTAssertNil(document.state.variable(id: width.id))
+    }
+
+    /// A variable used only by another variable is still in use.
+    @MainActor
+    func testAVariableUsedOnlyByAnotherVariableIsProtected() {
+        var state = CADModelState(name: "Vars")
+        let base = CADVariable(name: "base", expression: Expression(10))
+        state.variables = [base, CADVariable(name: "derived", expression: Expression(source: "base * 2"))]
+        let document = CADDocument(state: state)
+
+        XCTAssertEqual(document.deleteVariableIfUnused(base.id), 1)
+        XCTAssertNotNil(document.state.variable(id: base.id))
+    }
+
+    @MainActor
+    func testDeletingAnAlreadyGoneVariableIsHarmless() {
+        let document = CADDocument(state: CADModelState(name: "Vars"))
+        XCTAssertEqual(document.deleteVariableIfUnused(UUID()), 0)
+    }
+
+    /// Deleting one variable must not disturb the others' order or values.
+    @MainActor
+    func testDeletingLeavesTheRemainingVariablesIntact() {
+        var state = CADModelState(name: "Vars")
+        state.variables = [
+            CADVariable(name: "a", expression: Expression(1)),
+            CADVariable(name: "b", expression: Expression(2)),
+            CADVariable(name: "c", expression: Expression(3))
+        ]
+        let document = CADDocument(state: state)
+
+        document.deleteVariable(state.variables[1].id)
+
+        XCTAssertEqual(document.state.variables.map(\.trimmedName), ["a", "c"])
+        XCTAssertEqual(document.resolved.variables.values["c"], 3)
+    }
+
+    /// A variable defined in terms of another counts as a reference, so the
+    /// warning fires for a dependent variable and not only for bodies.
+    @MainActor
+    func testAVariableReferencingAnotherCountsAsAUse() {
+        var state = CADModelState(name: "Vars")
+        state.variables = [
+            CADVariable(name: "base", expression: Expression(10)),
+            CADVariable(name: "derived", expression: Expression(source: "base * 2"))
+        ]
+        let document = CADDocument(state: state)
+
+        XCTAssertEqual(document.referencesToVariable(named: "base"), 1)
+        XCTAssertEqual(document.referencesToVariable(named: "derived"), 0)
+    }
+
 }

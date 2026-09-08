@@ -1,1 +1,3 @@
-- fix the ploting of RL for range of a simulation
+deletion of variables 
+saving the results of previous simulations
+displaying multiple results on one plot, option for vswr and impedance.

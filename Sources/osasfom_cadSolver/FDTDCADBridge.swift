@@ -421,7 +421,7 @@ public enum PortSpectrum {
 // MARK: - 6. Orchestrator: CADDocument -> Engine -> results
 
 /// One point of a return-loss sweep.
-public struct S11Point: Hashable, Sendable {
+public struct S11Point: Hashable, Codable, Sendable {
     public let hertz: Double
     public let decibels: Double
 }
@@ -471,10 +471,11 @@ public struct S11PlotDomain: Hashable, Sendable {
 /// sense of it later — in particular the variable values that produced it,
 /// so a later change to those variables is visible as a diff against any
 /// past run.
-public struct RunRecord: Identifiable, Sendable {
+public struct RunRecord: Identifiable, Codable, Sendable {
     public let id: Int
     public let timestamp: Date
-    /// Variable name -> resolved value, at the moment this run started.
+    /// Variable name -> resolved value, at the moment this run started. This
+    /// is what makes two runs comparable: it says what the model *was*.
     public let variableSnapshot: [String: Double]
     public let sweptFrequencyRange: FrequencyRange
     public let maximumTimeSteps: Int
@@ -482,6 +483,80 @@ public struct RunRecord: Identifiable, Sendable {
     public let gridSize: (Int, Int, Int)
     public let s11Spectrum: [S11Point]
     public let s11DbAtCenter: Double?
+    /// Empty unless the run recorded far field. Stored with the run so a
+    /// pattern can be compared against an earlier one after a relaunch.
+    public let farFieldPatterns: [FarFieldPattern]
+
+    public init(
+        id: Int,
+        timestamp: Date,
+        variableSnapshot: [String: Double],
+        sweptFrequencyRange: FrequencyRange,
+        maximumTimeSteps: Int,
+        wasStoppedEarly: Bool,
+        gridSize: (Int, Int, Int),
+        s11Spectrum: [S11Point],
+        s11DbAtCenter: Double?,
+        farFieldPatterns: [FarFieldPattern] = []
+    ) {
+        self.id = id
+        self.timestamp = timestamp
+        self.variableSnapshot = variableSnapshot
+        self.sweptFrequencyRange = sweptFrequencyRange
+        self.maximumTimeSteps = maximumTimeSteps
+        self.wasStoppedEarly = wasStoppedEarly
+        self.gridSize = gridSize
+        self.s11Spectrum = s11Spectrum
+        self.s11DbAtCenter = s11DbAtCenter
+        self.farFieldPatterns = farFieldPatterns
+    }
+
+    public var cellCount: Int { gridSize.0 * gridSize.1 * gridSize.2 }
+
+    /// The deepest point of the sweep — the number a run is usually judged by.
+    public var deepestDip: S11Point? {
+        s11Spectrum.min { $0.decibels < $1.decibels }
+    }
+
+    // MARK: - Codable
+    //
+    // Hand-written only because `gridSize` is a tuple, which has no synthesised
+    // conformance; everything else is stored as-is.
+
+    private enum CodingKeys: String, CodingKey {
+        case id, timestamp, variableSnapshot, sweptFrequencyRange
+        case maximumTimeSteps, wasStoppedEarly, gridSize
+        case s11Spectrum, s11DbAtCenter, farFieldPatterns
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(Int.self, forKey: .id)
+        self.timestamp = try container.decode(Date.self, forKey: .timestamp)
+        self.variableSnapshot = try container.decode([String: Double].self, forKey: .variableSnapshot)
+        self.sweptFrequencyRange = try container.decode(FrequencyRange.self, forKey: .sweptFrequencyRange)
+        self.maximumTimeSteps = try container.decode(Int.self, forKey: .maximumTimeSteps)
+        self.wasStoppedEarly = try container.decode(Bool.self, forKey: .wasStoppedEarly)
+        let size = try container.decode([Int].self, forKey: .gridSize)
+        self.gridSize = (size.count > 2 ? size[0] : 0, size.count > 2 ? size[1] : 0, size.count > 2 ? size[2] : 0)
+        self.s11Spectrum = try container.decode([S11Point].self, forKey: .s11Spectrum)
+        self.s11DbAtCenter = try container.decodeIfPresent(Double.self, forKey: .s11DbAtCenter)
+        self.farFieldPatterns = try container.decodeIfPresent([FarFieldPattern].self, forKey: .farFieldPatterns) ?? []
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(timestamp, forKey: .timestamp)
+        try container.encode(variableSnapshot, forKey: .variableSnapshot)
+        try container.encode(sweptFrequencyRange, forKey: .sweptFrequencyRange)
+        try container.encode(maximumTimeSteps, forKey: .maximumTimeSteps)
+        try container.encode(wasStoppedEarly, forKey: .wasStoppedEarly)
+        try container.encode([gridSize.0, gridSize.1, gridSize.2], forKey: .gridSize)
+        try container.encode(s11Spectrum, forKey: .s11Spectrum)
+        try container.encodeIfPresent(s11DbAtCenter, forKey: .s11DbAtCenter)
+        try container.encode(farFieldPatterns, forKey: .farFieldPatterns)
+    }
 }
 
 @MainActor
@@ -531,6 +606,47 @@ public final class SimulationRunner: ObservableObject {
     @Published public private(set) var plotRange: FrequencyRange?
     @Published public private(set) var history: [RunRecord] = []
 
+    /// Which project's history is currently loaded.
+    @Published public private(set) var historyProjectURL: URL?
+    private var hasLoadedHistory = false
+
+    /// Points the history at `project` and loads its stored runs.
+    ///
+    /// Explicit rather than a `didSet` on the URL, because the first call is
+    /// usually `nil` (an unsaved project) and a property observer never fires
+    /// for a value that did not change — the untitled history would simply
+    /// never load.
+    public func loadHistory(for project: URL?) {
+        guard !hasLoadedHistory || project != historyProjectURL else { return }
+        let movingFromUntitled = hasLoadedHistory && historyProjectURL == nil && project != nil
+        let stored = historyStore.load(project: project)
+
+        historyProjectURL = project
+        hasLoadedHistory = true
+
+        // Saving an untitled project for the first time must not look like it
+        // wiped the session's runs: they were made on this model, so they move
+        // with it rather than being replaced by the new file's empty history.
+        if movingFromUntitled, stored.isEmpty, !history.isEmpty {
+            historyStore.save(history, project: project)
+            return
+        }
+        history = stored
+    }
+
+    private let historyStore: RunHistoryStore
+
+    /// Forgets this project's stored runs, on disk as well as in memory.
+    public func clearHistory() {
+        history = []
+        historyStore.clear(project: historyProjectURL)
+    }
+
+    public func deleteRun(id: Int) {
+        history.removeAll { $0.id == id }
+        historyStore.save(history, project: historyProjectURL)
+    }
+
     private var op: Operator?
     private var engine: Engine?
     private var ports: [LumpedPortExtension] = []
@@ -539,7 +655,11 @@ public final class SimulationRunner: ObservableObject {
     private var lastExcitedPortName: String?
     private var lastImpedanceOhm: Double = 50
 
-    public init() {}
+    /// `historyStore` is injectable so a test can persist somewhere
+    /// disposable rather than into the user's Application Support folder.
+    public init(historyStore: RunHistoryStore = RunHistoryStore()) {
+        self.historyStore = historyStore
+    }
 
     /// Recomputes `s11Spectrum` over `[minimumHertz, maximumHertz]` from the
     /// current run's already-recorded V(t)/I(t) — no re-simulation needed,
@@ -802,7 +922,8 @@ public final class SimulationRunner: ObservableObject {
                 wasStoppedEarly: didStop,
                 gridSize: gridSizeForHistory,
                 s11Spectrum: finalSpectrum,
-                s11DbAtCenter: centerDb
+                s11DbAtCenter: centerDb,
+                farFieldPatterns: patterns
             )
 
             await MainActor.run { [weak self] in
@@ -813,6 +934,9 @@ public final class SimulationRunner: ObservableObject {
                 self.s11Spectrum = finalSpectrum
                 self.farFieldPatterns = patterns
                 self.history.append(record)
+                // Persisted immediately: a run can take an hour, and losing
+                // it to a crash or a quit afterwards would be galling.
+                self.historyStore.save(self.history, project: self.historyProjectURL)
             }
         }
         currentTask = task

@@ -31,9 +31,6 @@ struct VariablesPanelView: View {
                     ForEach(document.state.variables) { variable in
                         VariableRow(document: document, variableID: variable.id)
                     }
-                    .onDelete { offsets in
-                        document.deleteVariables(at: offsets)
-                    }
                 }
                 .listStyle(.inset)
             }
@@ -59,6 +56,9 @@ private struct VariableRow: View {
     let variableID: UUID
 
     @State private var nameDraft: String = ""
+    /// Non-nil only while the "still in use" alert is up; holds the count
+    /// measured at the moment deletion was attempted.
+    @State private var blockedUseCount: Int?
     @FocusState private var isNameFocused: Bool
 
     private var variable: CADVariable? { document.state.variable(id: variableID) }
@@ -82,7 +82,11 @@ private struct VariableRow: View {
                     TextField("name", text: $nameDraft)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(.body, design: .monospaced))
-                        .frame(width: 130)
+                        // Shrinkable rather than fixed: the panel lives in a
+                        // resizable split view, and a fixed 130pt name field
+                        // pushed the delete button off the edge once the
+                        // sidebar was dragged narrow.
+                        .frame(minWidth: 56, idealWidth: 130, maxWidth: 130)
                         .focused($isNameFocused)
                         .onSubmit(commitName)
                         .onChange(of: isNameFocused) { focused in
@@ -100,7 +104,21 @@ private struct VariableRow: View {
                         ),
                         variables: scope
                     )
-                    .frame(minWidth: 110)
+                    .frame(minWidth: 52)
+
+                    Button(role: .destructive) {
+                        delete()
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+                    // Sized to its content and given priority over the two
+                    // text fields, so it is the last thing to give up space
+                    // instead of the first.
+                    .fixedSize()
+                    .layoutPriority(1)
+                    .help("Delete this variable")
                 }
 
                 TextField(
@@ -122,12 +140,40 @@ private struct VariableRow: View {
             }
             .padding(.vertical, 4)
             .contextMenu {
-                let references = document.referencesToVariable(named: variable.trimmedName)
-                Button("Delete\(references > 0 ? " (used in \(references) place\(references == 1 ? "" : "s"))" : "")", role: .destructive) {
-                    document.deleteVariable(variableID)
-                }
+                Button("Delete", role: .destructive) { delete() }
+            }
+            // A variable something still refers to cannot be deleted at all:
+            // removing it would turn every one of those expressions into an
+            // "unknown name" error.
+            .alert(
+                "“\(variable.trimmedName)” is still in use",
+                isPresented: Binding(
+                    get: { blockedUseCount != nil },
+                    set: { if !$0 { blockedUseCount = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { blockedUseCount = nil }
+            } message: {
+                Text(blockedMessage)
             }
         }
+    }
+
+    /// Deletes only if nothing refers to the variable.
+    ///
+    /// The reference scan walks every expression in the document, so it runs
+    /// here — once, on the click — and never during layout. Counting it in a
+    /// tooltip or a menu label instead meant re-walking the whole model for
+    /// every visible row on every redraw.
+    private func delete() {
+        let blocking = document.deleteVariableIfUnused(variableID)
+        if blocking > 0 { blockedUseCount = blocking }
+    }
+
+    private var blockedMessage: String {
+        let count = blockedUseCount ?? 0
+        let plural = count == 1 ? "expression" : "expressions"
+        return "\(count) \(plural) still refer to it. Change or remove those first, then delete the variable."
     }
 
     private func commitName() {

@@ -49,7 +49,7 @@ public struct FarFieldSample: Hashable, Sendable {
 /// Stores radiation intensity U(θ, φ) in W/sr rather than a normalized shape,
 /// so directivity, gain and realized gain can all be derived from the same
 /// grid without re-running anything.
-public struct FarFieldPattern: Sendable {
+public struct FarFieldPattern: Codable, Sendable {
     public let hertz: Double
     /// Ascending, 0…180 inclusive.
     public let thetaDegrees: [Double]
@@ -86,6 +86,39 @@ public struct FarFieldPattern: Sendable {
             thetaDegrees: thetaDegrees,
             phiDegrees: phiDegrees
         )
+    }
+
+    // MARK: - Codable
+    //
+    // Only the recorded inputs are stored; `radiatedPowerWatts` is re-derived
+    // through the normal initializer, so a decoded pattern can never disagree
+    // with one that was just computed.
+
+    private enum CodingKeys: String, CodingKey {
+        case hertz, thetaDegrees, phiDegrees, radiationIntensity
+        case acceptedPowerWatts, reflectionCoefficient
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            hertz: try container.decode(Double.self, forKey: .hertz),
+            thetaDegrees: try container.decode([Double].self, forKey: .thetaDegrees),
+            phiDegrees: try container.decode([Double].self, forKey: .phiDegrees),
+            radiationIntensity: try container.decode([[Double]].self, forKey: .radiationIntensity),
+            acceptedPowerWatts: try container.decodeIfPresent(Double.self, forKey: .acceptedPowerWatts),
+            reflectionCoefficient: try container.decodeIfPresent(Double.self, forKey: .reflectionCoefficient)
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(hertz, forKey: .hertz)
+        try container.encode(thetaDegrees, forKey: .thetaDegrees)
+        try container.encode(phiDegrees, forKey: .phiDegrees)
+        try container.encode(radiationIntensity, forKey: .radiationIntensity)
+        try container.encodeIfPresent(acceptedPowerWatts, forKey: .acceptedPowerWatts)
+        try container.encodeIfPresent(reflectionCoefficient, forKey: .reflectionCoefficient)
     }
 
     // MARK: - Integration

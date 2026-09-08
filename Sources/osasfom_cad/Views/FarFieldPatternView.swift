@@ -195,7 +195,7 @@ struct PolarPlotView: View {
         var ringDb = peak
         while ringDb > floor {
             let fraction = (ringDb - floor) / dynamicRangeDb
-            let r = radius * fraction
+            let r = radius * CGFloat(fraction)
             context.stroke(
                 Path(ellipseIn: CGRect(x: centre.x - r, y: centre.y - r, width: r * 2, height: r * 2)),
                 with: .color(.secondary.opacity(0.25)),
@@ -210,7 +210,10 @@ struct PolarPlotView: View {
 
         // Spokes every 30°.
         for degrees in stride(from: 0, to: 360, by: 30) {
-            let angle = Angle(degrees: Double(degrees) - 90).radians
+            // CGFloat, not Double: both `cos` overloads are visible here and the
+            // arm64 slice rejects the mixed-type expression as ambiguous, even
+            // though x86_64 resolves it happily.
+            let angle = CGFloat(Angle(degrees: Double(degrees) - 90).radians)
             var spoke = Path()
             spoke.move(to: centre)
             spoke.addLine(to: CGPoint(x: centre.x + radius * cos(angle), y: centre.y + radius * sin(angle)))
@@ -223,8 +226,8 @@ struct PolarPlotView: View {
         var started = false
         for point in cut.points {
             let fraction = max(0, (point.decibels - floor) / dynamicRangeDb)
-            let r = radius * fraction
-            let angle = Angle(degrees: point.angleDegrees - 90).radians
+            let r = radius * CGFloat(fraction)
+            let angle = CGFloat(Angle(degrees: point.angleDegrees - 90).radians)
             let position = CGPoint(x: centre.x + r * cos(angle), y: centre.y + r * sin(angle))
             if started {
                 trace.addLine(to: position)
@@ -236,7 +239,7 @@ struct PolarPlotView: View {
         context.stroke(trace, with: .color(.accentColor), lineWidth: 1.8)
 
         for (label, degrees) in [("0°", 0.0), ("90°", 90.0), ("±180°", 180.0), ("-90°", 270.0)] {
-            let angle = Angle(degrees: degrees - 90).radians
+            let angle = CGFloat(Angle(degrees: degrees - 90).radians)
             context.draw(
                 Text(label).font(.system(size: 9)).foregroundColor(.secondary),
                 at: CGPoint(x: centre.x + (radius + 12) * cos(angle), y: centre.y + (radius + 12) * sin(angle))

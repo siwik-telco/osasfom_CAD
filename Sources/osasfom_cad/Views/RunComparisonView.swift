@@ -269,7 +269,7 @@ struct OverlaidPolarPlotView: View {
 
         var ringDb = peak
         while ringDb > floor {
-            let r = radius * ((ringDb - floor) / dynamicRangeDb)
+            let r = radius * CGFloat((ringDb - floor) / dynamicRangeDb)
             context.stroke(
                 Path(ellipseIn: CGRect(x: centre.x - r, y: centre.y - r, width: r * 2, height: r * 2)),
                 with: .color(.secondary.opacity(0.22)),
@@ -278,7 +278,10 @@ struct OverlaidPolarPlotView: View {
             ringDb -= 10
         }
         for degrees in stride(from: 0, to: 360, by: 30) {
-            let angle = Angle(degrees: Double(degrees) - 90).radians
+            // CGFloat, not Double: both `cos` overloads are visible here and the
+            // arm64 slice rejects the mixed-type expression as ambiguous, even
+            // though x86_64 resolves it happily.
+            let angle = CGFloat(Angle(degrees: Double(degrees) - 90).radians)
             var spoke = Path()
             spoke.move(to: centre)
             spoke.addLine(to: CGPoint(x: centre.x + radius * cos(angle), y: centre.y + radius * sin(angle)))
@@ -289,8 +292,8 @@ struct OverlaidPolarPlotView: View {
             var path = Path()
             var started = false
             for point in trace.cut.points {
-                let r = radius * max(0, (point.decibels - floor) / dynamicRangeDb)
-                let angle = Angle(degrees: point.angleDegrees - 90).radians
+                let r = radius * CGFloat(max(0, (point.decibels - floor) / dynamicRangeDb))
+                let angle = CGFloat(Angle(degrees: point.angleDegrees - 90).radians)
                 let position = CGPoint(x: centre.x + r * cos(angle), y: centre.y + r * sin(angle))
                 if started { path.addLine(to: position) } else { path.move(to: position); started = true }
             }

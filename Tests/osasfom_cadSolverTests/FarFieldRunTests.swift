@@ -35,7 +35,11 @@ final class FarFieldRunTests: XCTestCase {
         ]
         state.simulation.domain = DomainSettings(mode: .automatic, padding: Vector3Expression(Vec3(repeating: 300)))
         state.simulation.frequency = FrequencyRange(minimumHertz: 0.7e9, maximumHertz: 1.3e9)
-        state.simulation.mesh = MeshSettings(cellsPerWavelength: 12)
+        // Asked for explicitly rather than inherited: this used to resolve
+        // twice as fine only because an unused FR-4 in the default material
+        // library was shrinking every model's cells. A dipole needs this
+        // resolution on its own merits.
+        state.simulation.mesh = MeshSettings(cellsPerWavelength: 25)
         state.simulation.ports = [
             SimulationPort(
                 name: "Feed",

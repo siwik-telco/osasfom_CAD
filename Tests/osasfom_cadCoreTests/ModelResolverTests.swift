@@ -265,19 +265,35 @@ final class ModelResolverTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(plan.wavelengthLimitedCellSize), 1.4989, accuracy: 1e-3)
     }
 
-    func testHighPermittivityShrinksTheCellSize() {
-        var state = makeState(bodies: [])
+    /// A dielectric refines the mesh only when a body actually uses it —
+    /// merely having it in the material library must not, or every all-air
+    /// model would pay for the densest substrate in the list.
+    func testHighPermittivityShrinksTheCellSizeWhenABodyUsesIt() {
+        let highK = MaterialDefinition(name: "High-K", color: .neutralGray, epsilonR: 9)
+        let substrate = CADBody(
+            name: "Substrate",
+            primitive: .box(BoxSpec(width: Expression(10), height: Expression(1), depth: Expression(10))),
+            materialID: highK.id
+        )
+
+        var state = makeState(bodies: [substrate])
         state.simulation.frequency = FrequencyRange(minimumHertz: 1e9, maximumHertz: 10e9)
-        state.materials = [MaterialLibrary.vacuum]
-        let vacuumOnly = try? XCTUnwrap(
+        state.materials = [MaterialLibrary.vacuum, highK]
+        let withDielectric = try? XCTUnwrap(
             ModelResolver.resolve(state).simulation.mesh.wavelengthLimitedCellSize
         )
 
-        state.materials.append(
-            MaterialDefinition(name: "High-K", color: .neutralGray, epsilonR: 9)
-        )
-        let withDielectric = try? XCTUnwrap(
-            ModelResolver.resolve(state).simulation.mesh.wavelengthLimitedCellSize
+        // Same library, but the body is vacuum, so the high-K is unused.
+        var unused = state
+        unused.bodies = [
+            CADBody(
+                name: "Substrate",
+                primitive: .box(BoxSpec(width: Expression(10), height: Expression(1), depth: Expression(10))),
+                materialID: MaterialLibrary.vacuumID
+            )
+        ]
+        let vacuumOnly = try? XCTUnwrap(
+            ModelResolver.resolve(unused).simulation.mesh.wavelengthLimitedCellSize
         )
 
         // n = 3, so cells must be three times smaller.

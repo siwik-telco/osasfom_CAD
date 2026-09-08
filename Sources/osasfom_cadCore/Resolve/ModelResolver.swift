@@ -54,7 +54,14 @@ public enum ModelResolver {
             state.simulation,
             variables: variables.values,
             modelBounds: BodyBounds.union(of: bodies.filter(\.isVisible).map(\.axisAlignedBounds)),
-            materials: state.materials,
+            // Only materials a visible body actually uses. Scanning the whole
+            // library instead meant an unused FR-4 (εr 4.3) in the default set
+            // silently halved the cell size of an all-air model, costing 8x
+            // the cells and 2x the timesteps for nothing.
+            materials: {
+                let inUse = Set(bodies.filter(\.isVisible).map(\.materialID))
+                return state.materials.filter { inUse.contains($0.id) }
+            }(),
             lengthUnit: state.lengthUnit
         )
         diagnostics.append(contentsOf: simulationOutcome.diagnostics)
@@ -406,6 +413,82 @@ public enum ModelResolver {
         var diagnostics: [Diagnostic]
     }
 
+    /// The cell size the wavelength criterion allows, before any explicit
+    /// `maxCellSize` narrows it further.
+    ///
+    /// Shared by the mesh plan and by the frequency-driven domain, which needs
+    /// it to express its clearance requirement in cells.
+    static func wavelengthLimitedCellSize(
+        setup: SimulationSetup,
+        materials: [MaterialDefinition],
+        lengthUnit: LengthUnit
+    ) -> Double? {
+        guard setup.frequency.isValid else { return nil }
+        // The shortest wavelength in the model sets the cell size: highest
+        // frequency, densest material.
+        let maximumIndex = materials
+            .filter { $0.kind == .dielectric }
+            .map { max(1.0, ($0.epsilonR * $0.muR).squareRoot()) }
+            .max() ?? 1.0
+        guard let wavelength = lengthUnit.wavelength(atHertz: setup.frequency.maximumHertz) else {
+            return nil
+        }
+        return wavelength / maximumIndex / setup.mesh.cellsPerWavelength
+    }
+
+    /// Padding for `.fromFrequency`, in project units.
+    ///
+    /// Sized on the *longest* wavelength in the sweep — the lowest frequency —
+    /// because that is the field that takes longest to decay before reaching
+    /// the absorbing boundary. Sizing on the highest frequency would look
+    /// tighter and be wrong.
+    private static func frequencyDerivedPadding(
+        setup: SimulationSetup,
+        materials: [MaterialDefinition],
+        lengthUnit: LengthUnit,
+        diagnostics: inout [Diagnostic],
+        subject: Diagnostic.Subject
+    ) -> Double? {
+        guard setup.frequency.isValid else {
+            diagnostics.append(
+                .error(
+                    subject,
+                    field: "domain.mode",
+                    "The domain is sized from the frequency range, so a valid range is required. Set one, or switch the domain to manual bounds."
+                )
+            )
+            return nil
+        }
+        guard let longestWavelength = lengthUnit.wavelength(atHertz: setup.frequency.minimumHertz) else {
+            return nil
+        }
+
+        let factor = max(setup.domain.paddingWavelengths, 0.05)
+        var padding = factor * longestWavelength
+
+        // A far-field surface has to sit outside the absorber and still
+        // enclose the antenna. If the wavelength rule alone would not leave
+        // room, widen until it does — an automatic domain that silently
+        // cannot produce the pattern that was asked for is not automatic.
+        if setup.farField.isEnabled,
+           let cellSize = wavelengthLimitedCellSize(setup: setup, materials: materials, lengthUnit: lengthUnit),
+           cellSize > 0 {
+            let requiredCellsPerSide = Double(setup.boundaries.pmlCellCount) + 2 + 4
+            let minimumPadding = requiredCellsPerSide * cellSize
+            if minimumPadding > padding {
+                padding = minimumPadding
+                diagnostics.append(
+                    .warning(
+                        subject,
+                        field: "domain.paddingWavelengths",
+                        "Padding widened to \(Expression.literalSource(padding)) so the far-field surface fits outside the \(setup.boundaries.pmlCellCount)-cell absorbing boundary. Raise the padding, or lower the PML cell count, to control this yourself."
+                    )
+                )
+            }
+        }
+        return padding
+    }
+
     private static func resolveSimulation(
         _ setup: SimulationSetup,
         variables: [String: Double],
@@ -440,6 +523,27 @@ public enum ModelResolver {
         // Domain
         var domain: BodyBounds?
         switch setup.domain.mode {
+        case .fromFrequency:
+            if let modelBounds {
+                if let padding = frequencyDerivedPadding(
+                    setup: setup,
+                    materials: materials,
+                    lengthUnit: lengthUnit,
+                    diagnostics: &diagnostics,
+                    subject: subject
+                ) {
+                    domain = modelBounds.expanded(by: Vec3(repeating: padding))
+                }
+            } else {
+                diagnostics.append(
+                    .warning(
+                        subject,
+                        field: "domain",
+                        "No visible bodies, so there is nothing to size the domain around."
+                    )
+                )
+            }
+
         case .automatic:
             if let modelBounds {
                 let paddingX = scalar(setup.domain.padding.x, field: "domain.padding.x", on: subject)
@@ -837,16 +941,11 @@ public enum ModelResolver {
         // Wavelength criterion uses the highest frequency and the largest
         // refractive index present, since that is where the wavelength is
         // shortest.
-        var wavelengthLimit: Double?
-        if setup.frequency.isValid {
-            let maximumIndex = materials
-                .filter { $0.kind == .dielectric }
-                .map { max(1.0, ($0.epsilonR * $0.muR).squareRoot()) }
-                .max() ?? 1.0
-            if let wavelength = lengthUnit.wavelength(atHertz: setup.frequency.maximumHertz) {
-                wavelengthLimit = wavelength / maximumIndex / mesh.cellsPerWavelength
-            }
-        }
+        let wavelengthLimit = wavelengthLimitedCellSize(
+            setup: setup,
+            materials: materials,
+            lengthUnit: lengthUnit
+        )
 
         var maxCellSize: Double?
         do {

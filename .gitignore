@@ -64,3 +64,10 @@ fastlane/test_output
 
 ##other files
 /build/
+/Scripts/
+/.swiftpm/
+/.claude/
+/.vscode/
+/dist/
+# Packaged app, installer and disk image
+dist/

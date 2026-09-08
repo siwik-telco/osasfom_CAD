@@ -122,6 +122,32 @@ struct SimulationInspectorView: View {
         }
     }
 
+    /// What the automatic sizing actually chose. An automatic setting the user
+    /// cannot see the result of is just a hidden setting.
+    @ViewBuilder
+    private var derivedSizeReadout: some View {
+        let plan = document.resolved.simulation.mesh
+        if let domain = document.resolved.simulation.domain {
+            let size = domain.size
+            LabeledContent("Domain") {
+                Text(String(format: "%.1f × %.1f × %.1f %@", size.x, size.y, size.z, unit))
+                    .monospacedDigit()
+            }
+            if let cell = plan.effectiveMaxCellSize, cell > 0 {
+                LabeledContent("Cell size") {
+                    Text(String(format: "%.3f %@", cell, unit))
+                        .monospacedDigit()
+                }
+                let cells = (size.x / cell) * (size.y / cell) * (size.z / cell)
+                LabeledContent("Approx. cells") {
+                    Text(cells >= 1e6 ? String(format: "%.1f M", cells / 1e6) : String(format: "%.0f k", cells / 1e3))
+                        .monospacedDigit()
+                        .foregroundStyle(cells > 2e7 ? Color.orange : Color.primary)
+                }
+            }
+        }
+    }
+
     // MARK: - Domain
 
     private var domainSection: some View {
@@ -138,7 +164,32 @@ struct SimulationInspectorView: View {
                 }
             }
 
+            Text(setup.domain.mode.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
             switch setup.domain.mode {
+            case .fromFrequency:
+                HStack {
+                    Text("Padding").foregroundStyle(.secondary)
+                    Spacer()
+                    TextField(
+                        "",
+                        value: document.simulationBinding(
+                            \.domain.paddingWavelengths,
+                            actionName: "Edit Domain Padding",
+                            field: "domain.paddingWavelengths"
+                        ),
+                        format: FieldFormat.decimal
+                    )
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 60)
+                    Text("λ at \(FrequencyFormatter.string(hertz: setup.frequency.minimumHertz))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                derivedSizeReadout
+
             case .automatic:
                 ExpressionRow(
                     label: "Padding X",

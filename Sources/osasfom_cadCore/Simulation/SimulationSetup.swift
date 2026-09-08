@@ -109,7 +109,10 @@ public struct BoundarySettings: Codable, Hashable, Sendable {
 /// The computational volume.
 public struct DomainSettings: Codable, Hashable, Sendable, ExpressionWalkable {
     public enum Mode: String, Codable, CaseIterable, Identifiable, Sendable {
-        /// Model bounding box grown by `padding`.
+        /// Model bounding box grown by padding derived from the frequency
+        /// range — the user states the band, the size follows from it.
+        case fromFrequency
+        /// Model bounding box grown by the explicit `padding` vector.
         case automatic
         /// Explicit box.
         case manual
@@ -118,28 +121,69 @@ public struct DomainSettings: Codable, Hashable, Sendable, ExpressionWalkable {
 
         public var displayName: String {
             switch self {
-            case .automatic: return "Automatic (model + padding)"
+            case .fromFrequency: return "Automatic (from frequency range)"
+            case .automatic: return "Model + fixed padding"
             case .manual: return "Manual bounds"
             }
         }
+
+        public var explanation: String {
+            switch self {
+            case .fromFrequency:
+                return "Padding is a fraction of the wavelength at the lowest simulated frequency — the distance that actually matters for an open boundary. Widened automatically if a far-field surface needs more room."
+            case .automatic:
+                return "Padding is whatever you type, in project units."
+            case .manual:
+                return "The box is exactly what you type, ignoring the model's own extent."
+            }
+        }
     }
+
+    /// Padding in wavelengths at the *lowest* simulated frequency, used by
+    /// `.fromFrequency`.
+    ///
+    /// Half a wavelength is the usual working figure: enough for the reactive
+    /// near field to have died away before the absorber, without paying for
+    /// domain that contributes nothing. A quarter is tight but workable for a
+    /// return-loss-only run; a full wavelength is worth it when the absolute
+    /// far-field level matters.
+    public static let defaultPaddingWavelengths = 0.5
 
     public var mode: Mode
     /// Per-axis padding added on both sides in automatic mode, in project units.
     /// A quarter wavelength at the lowest frequency is the usual rule of thumb.
     public var padding: Vector3Expression
     public var manualBounds: BoundsExpression
+    /// Multiplier on the lowest-frequency wavelength, for `.fromFrequency`.
+    public var paddingWavelengths: Double
 
     public init(
-        mode: Mode = .automatic,
+        mode: Mode = .fromFrequency,
         padding: Vector3Expression = Vector3Expression(Vec3(repeating: 20)),
         manualBounds: BoundsExpression = BoundsExpression(
             BodyBounds(center: .zero, size: Vec3(repeating: 200))
-        )
+        ),
+        paddingWavelengths: Double = DomainSettings.defaultPaddingWavelengths
     ) {
         self.mode = mode
         self.padding = padding
         self.manualBounds = manualBounds
+        self.paddingWavelengths = paddingWavelengths
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case mode, padding, manualBounds, paddingWavelengths
+    }
+
+    /// Hand-written so projects written before the frequency-driven mode
+    /// existed still load, keeping the padding they were saved with.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.mode = try container.decode(Mode.self, forKey: .mode)
+        self.padding = try container.decode(Vector3Expression.self, forKey: .padding)
+        self.manualBounds = try container.decode(BoundsExpression.self, forKey: .manualBounds)
+        self.paddingWavelengths = try container.decodeIfPresent(Double.self, forKey: .paddingWavelengths)
+            ?? DomainSettings.defaultPaddingWavelengths
     }
 
     public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {

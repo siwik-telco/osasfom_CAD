@@ -268,6 +268,36 @@ public final class CADMaterialProvider: MaterialProvider {
 // MARK: - 3. Excitation waveform (Gaussian pulse / sinusoidal / step)
 
 public enum ExcitationWaveformSampler {
+    /// How long the source keeps injecting, in seconds, or `nil` for one that
+    /// never stops.
+    ///
+    /// The end criterion must not fire while the source is still driving: at
+    /// t = 0 the domain holds no energy at all, so a decay test taken then
+    /// would end the run before it began. Only a pulse has an end; a
+    /// sinusoidal or step source pumps the domain indefinitely, its energy
+    /// plateaus instead of decaying, and the run is meant to fall back on the
+    /// step cap.
+    public static func excitationDurationSeconds(
+        excitation: Excitation,
+        frequency: FrequencyRange
+    ) -> Double? {
+        switch excitation.waveform {
+        case .sinusoidal, .step:
+            return nil
+        case .gaussianPulse:
+            // Matches `value(excitation:frequency:timeSeconds:)`, which
+            // centres the pulse at t0 = 3σ. Five more σ puts the Gaussian
+            // envelope at exp(-12.5) ≈ 4e-6 of peak — genuinely spent. The
+            // obvious 2·t0 = 6σ is not: it leaves the source still at ~1% of
+            // peak, which is well above the -40 dB the criterion is watching
+            // for and would have it test a domain that is still being driven.
+            let fCenter = frequency.centerHertz
+            let bw = max(frequency.bandwidthHertz, fCenter * 0.05)
+            let sigma = 1 / (Double.pi * bw)
+            return 8 * sigma
+        }
+    }
+
     public static func value(
         excitation: Excitation,
         frequency: FrequencyRange,
@@ -728,8 +758,53 @@ public final class SimulationRunner: ObservableObject {
     /// over the recorded time series — fine for a few hundred points.
     public var spectrumPointCount = 121
 
+    /// How a run finished.
+    public enum CompletionReason: Equatable, Sendable {
+        /// Converged: residual energy fell to the requested decay.
+        case energyDecay(decibels: Double, atStep: Int)
+        /// Ran out of timesteps first. openEMS warns in this case and so do
+        /// we: the time series was truncated while the structure was still
+        /// ringing, so the DFT behind S11 sees a cut-off signal and the
+        /// spectrum carries leakage — ripple, smeared resonances, unreliable
+        /// low-frequency content.
+        case stepCapReached(decibels: Double?)
+        case stoppedByUser
+
+        public var didConverge: Bool {
+            if case .energyDecay = self { return true }
+            return false
+        }
+
+        public var summary: String {
+            switch self {
+            case .energyDecay(let decibels, let atStep):
+                return String(format: "Converged at %.1f dB after %d steps.", decibels, atStep)
+            case .stepCapReached(let decibels):
+                guard let decibels else {
+                    return "Hit the step cap. No decay criterion applied — the excitation never stops driving."
+                }
+                return String(
+                    format: "Hit the step cap at %.1f dB, short of the decay target. "
+                        + "The fields were still ringing, so the spectrum is truncated: expect ripple "
+                        + "and unreliable low-frequency content. Raise Max time steps, or loosen Energy decay.",
+                    decibels
+                )
+            case .stoppedByUser:
+                return "Stopped."
+            }
+        }
+    }
+
     @Published public private(set) var isRunning = false
     @Published public private(set) var progress: Double = 0
+    /// Residual field energy relative to the peak, in dB — the same figure
+    /// openEMS prints each status line. `nil` before the first check, or for
+    /// a source that never stops driving.
+    @Published public private(set) var energyDecayDb: Double?
+    /// Why the last run ended. The distinction matters: only `.energyDecay`
+    /// means the fields actually rang down, which is the precondition the
+    /// S-parameter DFT assumes.
+    @Published public private(set) var completionReason: CompletionReason?
     @Published public private(set) var s11DbAtCenter: Double?
     @Published public private(set) var s11Spectrum: [S11Point] = []
     /// One pattern per recorded far-field frequency. Empty unless the run had
@@ -987,10 +1062,34 @@ public final class SimulationRunner: ObservableObject {
         self.farFieldPatterns = []
         self.farFieldWarning = pendingFarFieldWarning
         self.wasStoppedEarly = false
+        self.energyDecayDb = nil
+        self.completionReason = nil
 
         let maxSteps = UInt(setup.solver.maximumTimeSteps)
-        let chunk: UInt = 500
+        // Also the energy-check interval, which is what sets how far past the
+        // threshold a run can overshoot before it notices. `calcEnergy` costs
+        // roughly a third of a timestep, so checking every 100 is about 0.3%
+        // overhead — cheap enough that granularity is worth more than the
+        // saving. At 500 a fast-decaying model would blow through 20 dB
+        // between two consecutive checks.
+        let chunk: UInt = 100
+
         let frequency = setup.frequency
+        // The end criterion. Negative dB, e.g. -40 means "stop once residual
+        // energy is 1e-4 of its peak". A source that never stops driving has
+        // no decay to wait for, so the criterion is disabled and the run falls
+        // back on the step cap.
+        let decayTargetDb = setup.solver.energyDecayDecibels
+        let excitationSeconds = ExcitationWaveformSampler.excitationDurationSeconds(
+            excitation: setup.excitation,
+            frequency: frequency
+        )
+        let dT = op.dT
+        let excitationSteps: UInt? = excitationSeconds.flatMap { seconds -> UInt? in
+            guard dT > 0 else { return nil }
+            return UInt((seconds / dT).rounded(.up))
+        }
+        let usesDecayCriterion = decayTargetDb < 0 && excitationSteps != nil
         let excitedPortName = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.name
         let impedanceOhm = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.impedanceOhm
         let spectrumPointCount = self.spectrumPointCount
@@ -1010,16 +1109,67 @@ public final class SimulationRunner: ObservableObject {
         let task = Task.detached(priority: .userInitiated) { [weak self] in
             var done: UInt = 0
             var stopped = false
+            var peakEnergy = 0.0
+            var latestDecayDb: Double?
+            var convergedAtStep: UInt?
+            var reportedProgress = 0.0
+
             while done < maxSteps {
                 if Task.isCancelled { stopped = true; break }
                 let step = min(chunk, maxSteps - done)
                 engine.iterateTS(step)
                 done += step
-                let fraction = Double(done) / Double(maxSteps)
-                await MainActor.run { [weak self] in self?.progress = fraction }
+
+                var decayFraction = 0.0
+                if usesDecayCriterion {
+                    let energy = engine.calcEnergy()
+                    peakEnergy = Swift.max(peakEnergy, energy)
+                    if peakEnergy > 0, energy > 0 {
+                        // Energy is power-like, so 10·log10 — the same
+                        // convention openEMS prints and the same one the
+                        // Energy decay setting is written in.
+                        let db = 10 * log10(energy / peakEnergy)
+                        latestDecayDb = db
+                        decayFraction = Swift.min(Swift.max(db / decayTargetDb, 0), 1)
+
+                        // Never before the source has finished driving: the
+                        // domain starts empty, and a decay test taken then
+                        // would end the run at step one.
+                        if let excitationSteps, done >= excitationSteps, db <= decayTargetDb {
+                            convergedAtStep = done
+                            break
+                        }
+                    }
+                }
+
+                // Whichever criterion is nearer to ending the run is the
+                // honest measure of progress, and it never goes backwards —
+                // residual energy is noisy, and a bar that retreats reads as
+                // a fault.
+                let fraction = Swift.max(Double(done) / Double(maxSteps), decayFraction)
+                reportedProgress = Swift.max(reportedProgress, fraction)
+                let shown = reportedProgress
+                let shownDb = latestDecayDb
+                await MainActor.run { [weak self] in
+                    self?.progress = shown
+                    self?.energyDecayDb = shownDb
+                }
             }
 
             let didStop = stopped
+            let reason: CompletionReason
+            if stopped {
+                reason = .stoppedByUser
+            } else if let convergedAtStep, let db = latestDecayDb {
+                reason = .energyDecay(decibels: db, atStep: Int(convergedAtStep))
+            } else {
+                reason = .stepCapReached(decibels: usesDecayCriterion ? latestDecayDb : nil)
+            }
+            let finalDecayDb = latestDecayDb
+            await MainActor.run { [weak self] in
+                self?.completionReason = reason
+                self?.energyDecayDb = finalDecayDb
+            }
             guard let excited = portExtensionsSnapshot.first(where: { $0.extensionName == "Port_\(excitedPortName)" }),
                   excited.timeSeconds.count > 1 else {
                 await MainActor.run { [weak self] in

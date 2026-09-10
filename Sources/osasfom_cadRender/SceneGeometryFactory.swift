@@ -262,6 +262,72 @@ public enum SceneGeometryFactory {
         return node
     }
 
+    /// The Yee grid, drawn as three cutting planes through `focus`.
+    ///
+    /// Not the whole 3D lattice: a realistic domain is a couple of million
+    /// cells, and drawing every one would be both unreadable and slow. Three
+    /// orthogonal slices through the geometry answer the question the view
+    /// exists for — where do the lines actually land, and did the mesher snap
+    /// them to the faces and the feed gap I care about — for 2·(nx+ny+nz)
+    /// segments instead of nx·ny·nz.
+    ///
+    /// `linesPerAxis` and `bounds` are both in project units.
+    public static func makeMeshLinesNode(
+        linesPerAxis: [[Double]],
+        bounds: BodyBounds,
+        focus: Vec3,
+        color: NSColor
+    ) -> SCNNode {
+        guard linesPerAxis.count == 3 else { return SCNNode() }
+
+        var vertices: [SCNVector3] = []
+        var indices: [UInt32] = []
+
+        func segment(_ start: Vec3, _ end: Vec3) {
+            indices.append(UInt32(vertices.count))
+            vertices.append(vector(start))
+            indices.append(UInt32(vertices.count))
+            vertices.append(vector(end))
+        }
+
+        // On the plane normal to `axis`, the visible grid lines are those of
+        // the other two axes, each spanning the domain on the third.
+        for axis in Axis.allCases {
+            let (first, second) = axis.perpendicular
+            let planeCoordinate = Swift.min(Swift.max(focus[axis], bounds.minimum[axis]), bounds.maximum[axis])
+
+            for (along, across) in [(first, second), (second, first)] {
+                for line in linesPerAxis[axisIndex(along)] {
+                    var start = Vec3.zero
+                    var end = Vec3.zero
+                    start[axis] = planeCoordinate
+                    end[axis] = planeCoordinate
+                    start[along] = line
+                    end[along] = line
+                    start[across] = bounds.minimum[across]
+                    end[across] = bounds.maximum[across]
+                    segment(start, end)
+                }
+            }
+        }
+
+        guard !vertices.isEmpty else { return SCNNode() }
+
+        let source = SCNGeometrySource(vertices: vertices)
+        let element = SCNGeometryElement(indices: indices, primitiveType: .line)
+        let geometry = SCNGeometry(sources: [source], elements: [element])
+        geometry.materials = [makeLineMaterial(color: color)]
+        return SCNNode(geometry: geometry)
+    }
+
+    private static func axisIndex(_ axis: Axis) -> Int {
+        switch axis {
+        case .x: return 0
+        case .y: return 1
+        case .z: return 2
+        }
+    }
+
     public static func makeLineMaterial(color: NSColor) -> SCNMaterial {
         let material = SCNMaterial()
         material.diffuse.contents = color

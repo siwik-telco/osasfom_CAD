@@ -83,6 +83,7 @@ struct MainView: View {
                 SceneViewport(
                     document: document,
                     farField: farFieldOverlayMesh,
+                    meshPreview: simulationMeshPreview,
                     options: viewOptions,
                     frameRequestToken: frameRequestToken
                 )
@@ -155,11 +156,48 @@ struct MainView: View {
         return pattern.mesh(quantity: farFieldQuantity, radius: radius)
     }
 
+    /// The grid the solver would build for the model as it stands.
+    ///
+    /// Meshed on demand from the same `GridMesher` the run uses, so what the
+    /// viewport shows is the real thing rather than a second implementation
+    /// that could drift from it — including the lines snapped to body faces,
+    /// port terminals and refinement regions. Only computed while the toggle
+    /// is on: meshing is milliseconds, but this is recomputed on every
+    /// document change.
+    private var simulationMeshPreview: SceneController.MeshPreview? {
+        guard viewOptions.showMesh else { return nil }
+        let resolved = document.resolved
+        guard let domain = resolved.simulation.domain else { return nil }
+        guard let lines = GridMesher.makeDiscLines(
+            resolved: resolved,
+            setup: document.state.simulation,
+            unit: document.state.lengthUnit
+        ) else { return nil }
+
+        // GridMesher works in metres; the scene is in project units.
+        let unit = document.state.lengthUnit
+        return SceneController.MeshPreview(
+            linesPerAxis: lines.metersLines.map { $0.map(unit.fromMeters) },
+            bounds: domain,
+            focus: resolved.modelBounds?.center ?? domain.center
+        )
+    }
+
     private var viewOptionsOverlay: some View {
         VStack(alignment: .leading, spacing: 4) {
             Toggle("Grid", isOn: $viewOptions.showGrid)
             Toggle("Domain", isOn: $viewOptions.showDomain)
             Toggle("Ports", isOn: $viewOptions.showPorts)
+            Toggle("Mesh", isOn: $viewOptions.showMesh)
+                .help("Show the Yee grid the solver will use, sliced through the model on three planes")
+            if viewOptions.showMesh, let preview = simulationMeshPreview {
+                // The real count, unlike the inspector's uniform-fill
+                // estimate, which ignores snapping and refinement.
+                Text("\(preview.cellCount.formatted()) cells")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 18)
+            }
             if !simulationRunner.farFieldPatterns.isEmpty {
                 Toggle("Far field", isOn: $viewOptions.showFarField)
                 if viewOptions.showFarField {

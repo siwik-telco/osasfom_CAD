@@ -14,6 +14,9 @@ struct SceneViewport: NSViewRepresentable {
     /// The radiation pattern to overlay, already meshed. `nil` when the last
     /// run recorded none.
     let farField: FarFieldMesh?
+    /// The solver's grid, already meshed and in project units. `nil` when the
+    /// Mesh toggle is off or the model has no domain to mesh.
+    let meshPreview: SceneController.MeshPreview?
     let options: SceneController.ViewOptions
     /// Incremented by the toolbar to request a camera reframe. Because framing is
     /// explicit, an edit never moves the camera.
@@ -42,7 +45,7 @@ struct SceneViewport: NSViewRepresentable {
         }
         view.isFacePicking = document.facePickRequest != nil
 
-        context.coordinator.sync(farField: farField, options: options)
+        context.coordinator.sync(farField: farField, meshPreview: meshPreview, options: options)
         context.coordinator.controller.frame(bounds: document.resolved.modelBounds)
         context.coordinator.lastFrameToken = frameRequestToken
         return view
@@ -50,7 +53,7 @@ struct SceneViewport: NSViewRepresentable {
 
     func updateNSView(_ nsView: PickingSceneView, context: Context) {
         context.coordinator.document = document
-        context.coordinator.sync(farField: farField, options: options)
+        context.coordinator.sync(farField: farField, meshPreview: meshPreview, options: options)
 
         if frameRequestToken != context.coordinator.lastFrameToken {
             context.coordinator.lastFrameToken = frameRequestToken
@@ -79,12 +82,17 @@ struct SceneViewport: NSViewRepresentable {
             self.document = document
         }
 
-        func sync(farField: FarFieldMesh?, options: SceneController.ViewOptions) {
+        func sync(
+            farField: FarFieldMesh?,
+            meshPreview: SceneController.MeshPreview?,
+            options: SceneController.ViewOptions
+        ) {
             controller.sync(
                 resolved: document.resolved,
                 materials: document.state.materials,
                 selectedBodyIDs: document.selectedBodyIDs,
                 farField: farField,
+                meshPreview: meshPreview,
                 options: options
             )
         }

@@ -49,6 +49,8 @@ public final class SceneController {
     /// pattern doesn't rebuild its mesh on every scene sync.
     private var farFieldSignature: Int?
     private var domainBounds: BodyBounds?
+    private var meshNode: SCNNode?
+    private var meshSignature: MeshPreview?
     private var portNodes: [UUID: SCNNode] = [:]
     private var portSignatures: [UUID: BodyBounds] = [:]
 
@@ -74,10 +76,41 @@ public final class SceneController {
 
     // MARK: - Reconciliation
 
+    /// The solver's grid, ready to draw.
+    ///
+    /// Passed in rather than computed here because the mesher lives in
+    /// `osasfom_cadSolver` and this target deliberately depends only on Core —
+    /// the app layer, which sees both, does the conversion.
+    public struct MeshPreview: Equatable, Sendable {
+        /// Grid line positions per axis (x, y, z), in **project units**.
+        /// `GridMesher` works in metres, so the caller converts.
+        public let linesPerAxis: [[Double]]
+        /// The simulation domain the lines span.
+        public let bounds: BodyBounds
+        /// Where the three cutting planes sit — the model's centre, so the
+        /// slices cut through the geometry rather than through empty padding.
+        public let focus: Vec3
+
+        public init(linesPerAxis: [[Double]], bounds: BodyBounds, focus: Vec3) {
+            self.linesPerAxis = linesPerAxis
+            self.bounds = bounds
+            self.focus = focus
+        }
+
+        /// Cells the grid actually contains — the real number, not the
+        /// uniform-fill estimate the inspector shows.
+        public var cellCount: Int {
+            linesPerAxis.reduce(1) { $0 * Swift.max($1.count - 1, 0) }
+        }
+    }
+
     public struct ViewOptions: Equatable, Sendable {
         public var showGrid: Bool
         public var showDomain: Bool
         public var showPorts: Bool
+        /// The Yee grid the solver will actually use. Off by default: it is a
+        /// pre-flight check, not something to model against all day.
+        public var showMesh: Bool
         public var showFarField: Bool
         /// 0 hides the pattern entirely, 1 draws it solid. Separate from
         /// `showFarField` so the surface can be faded back far enough to see
@@ -89,12 +122,14 @@ public final class SceneController {
             showGrid: Bool = true,
             showDomain: Bool = true,
             showPorts: Bool = true,
+            showMesh: Bool = false,
             showFarField: Bool = true,
             farFieldOpacity: Double = 0.85
         ) {
             self.showGrid = showGrid
             self.showDomain = showDomain
             self.showPorts = showPorts
+            self.showMesh = showMesh
             self.showFarField = showFarField
             self.farFieldOpacity = farFieldOpacity
         }
@@ -105,6 +140,7 @@ public final class SceneController {
         materials: [MaterialDefinition],
         selectedBodyIDs: Set<UUID>,
         farField: FarFieldMesh? = nil,
+        meshPreview: MeshPreview? = nil,
         options: ViewOptions
     ) {
         let materialsByID = Dictionary(
@@ -129,6 +165,7 @@ public final class SceneController {
         syncGrid(for: resolved)
         syncDomain(resolved.simulation.domain, isVisible: options.showDomain)
         syncPorts(resolved.simulation.ports, isVisible: options.showPorts)
+        syncSimulationMesh(options.showMesh ? meshPreview : nil)
         syncFarField(
             farField,
             isVisible: options.showFarField,
@@ -324,6 +361,33 @@ public final class SceneController {
         overlayRoot.addChildNode(node)
         domainNode = node
         domainBounds = bounds
+    }
+
+    /// Rebuilds the Yee-grid overlay, and only when the grid actually
+    /// changed — remeshing is cheap but rebuilding a few thousand line
+    /// vertices on every inspector keystroke is not.
+    private func syncSimulationMesh(_ preview: MeshPreview?) {
+        guard let preview else {
+            meshNode?.removeFromParentNode()
+            meshNode = nil
+            meshSignature = nil
+            return
+        }
+        guard meshSignature != preview || meshNode == nil else { return }
+
+        meshNode?.removeFromParentNode()
+        let node = SceneGeometryFactory.makeMeshLinesNode(
+            linesPerAxis: preview.linesPerAxis,
+            bounds: preview.bounds,
+            focus: preview.focus,
+            color: SceneStyle.simulationMesh
+        )
+        // Faded back so the geometry the mesh is wrapped around stays the
+        // thing you are looking at.
+        node.opacity = 0.5
+        overlayRoot.addChildNode(node)
+        meshNode = node
+        meshSignature = preview
     }
 
     private func syncPorts(_ ports: [ResolvedPort], isVisible: Bool) {

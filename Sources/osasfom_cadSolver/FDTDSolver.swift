@@ -416,6 +416,35 @@ public final class Engine {
         return true
     }
 
+    /// Total field energy left in the domain, as an unnormalised proxy.
+    ///
+    /// Port of openEMS's `CalcFastEnergy`. The sum is
+    /// `Σ volt² + Σ curr²` over every edge and every direction — *not* the
+    /// physical `½∫(ε|E|² + µ|H|²)dV`, because the per-edge C and L that
+    /// would weight it are scratch buffers `calcECOperator()` releases once
+    /// the update coefficients exist.
+    ///
+    /// That is fine for what this is used for, and only for that: the end
+    /// criterion compares energy against the **peak of this same quantity**,
+    /// so any weighting that does not change over the run cancels in the
+    /// ratio. It is a decay monitor, not a measurement — do not report it as
+    /// joules, and do not compare it between two different meshes.
+    public func calcEnergy() -> Double {
+        var total = 0.0
+        for n in 0..<3 {
+            for x in 0..<numLines.0 {
+                for y in 0..<numLines.1 {
+                    for z in 0..<numLines.2 {
+                        let v = volt.get(n, x, y, z)
+                        let i = curr.get(n, x, y, z)
+                        total += v * v + i * i
+                    }
+                }
+            }
+        }
+        return total
+    }
+
     public func nextInterval(currSpeed: Float) {
         // hook for adaptive/streaming visualisation, no-op by default
         _ = currSpeed

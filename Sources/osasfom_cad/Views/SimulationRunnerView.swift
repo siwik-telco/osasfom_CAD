@@ -68,7 +68,11 @@ struct SimulationRunnerView: View {
             if runner.isRunning {
                 VStack(alignment: .leading, spacing: 6) {
                     ProgressView(value: runner.progress) {
-                        Text("Running… \(Int(runner.progress * 100))%")
+                        if let decay = runner.energyDecayDb {
+                            Text("Running… \(Int(runner.progress * 100))% · energy \(decay, format: .number.precision(.fractionLength(1))) dB")
+                        } else {
+                            Text("Running… \(Int(runner.progress * 100))%")
+                        }
                     }
                     if runner.gridSize != (0, 0, 0) {
                         Text("Grid \(runner.gridSize.0) × \(runner.gridSize.1) × \(runner.gridSize.2) cells")
@@ -137,10 +141,17 @@ struct SimulationRunnerView: View {
 
     private var resultsSection: some View {
         Section {
-            if runner.wasStoppedEarly {
-                Label("Stopped early — spectrum is from a partial, less-converged run.", systemImage: "exclamationmark.circle")
+            if let reason = runner.completionReason, !reason.didConverge {
+                // Only a decay finish means the fields actually rang down,
+                // which is what the S-parameter DFT assumes. Anything else is
+                // a truncated time series and the user needs to know.
+                Label(reason.summary, systemImage: "exclamationmark.circle")
                     .font(.caption)
                     .foregroundStyle(.orange)
+            } else if let reason = runner.completionReason {
+                Label(reason.summary, systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Picker("", selection: $resultsTab) {

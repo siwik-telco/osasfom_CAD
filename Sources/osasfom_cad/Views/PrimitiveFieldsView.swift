@@ -20,6 +20,31 @@ struct PrimitiveFieldsView: View {
 
     var body: some View {
         switch primitive {
+        case .mesh(let spec):
+            // Nothing here is editable: the geometry is the imported file's.
+            // What the user needs is enough to tell whether the import landed
+            // correctly — above all the size, since STL carries no units and
+            // a wrong one shows up as a model 25.4x or 1000x off.
+            LabeledContent("Source", value: spec.sourceName)
+            LabeledContent("Read as", value: spec.sourceUnit.displayName)
+            LabeledContent("Triangles", value: spec.mesh.triangleCount.formatted())
+            ForEach(Axis.allCases) { axis in
+                LabeledContent(
+                    "Size (\(axis.displayName))",
+                    value: "\(spec.mesh.bounds.size[axis].formatted(.number.precision(.fractionLength(0...4)))) \(unitSymbol)"
+                )
+            }
+            if !spec.mesh.isWatertight {
+                Label(
+                    "This mesh is not closed — some edges are not shared by exactly two faces. "
+                        + "Inside-vs-outside is decided by a majority of three rays, which is a "
+                        + "best effort, not a repair. Expect stray cells where the surface has holes.",
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.caption)
+                .foregroundStyle(.orange)
+            }
+
         case .box:
             ForEach(Axis.allCases) { axis in
                 ExpressionRow(

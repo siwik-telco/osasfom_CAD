@@ -517,6 +517,19 @@ public enum SolverExportEncoder {
                 axis: normal.rawValue,
                 isZeroThickness: size[normal] == 0
             )
+        case .mesh(let mesh):
+            // The deck describes shapes parametrically and has no way to
+            // carry a triangle soup. Its bounding box is reported so the
+            // record stays well-formed and the body is still visible in the
+            // export; `ModelResolver` warns that the export is a box.
+            return SolverExport.ShapeRecord(
+                type: "mesh",
+                size: SolverExport.VectorRecord(unit.toMeters(mesh.bounds.size)),
+                radiusMeters: nil,
+                lengthMeters: nil,
+                axis: nil,
+                isZeroThickness: nil
+            )
         }
     }
 }

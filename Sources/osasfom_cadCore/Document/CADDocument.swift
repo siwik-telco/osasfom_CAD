@@ -195,6 +195,41 @@ public final class CADDocument: ObservableObject {
         return inserted.id
     }
 
+    /// Brings an STL file in as a new body.
+    ///
+    /// `fileUnit` says what the file's numbers mean — STL stores none — and
+    /// the geometry is converted into the project's own unit. The mesh is
+    /// recentred on its bounding box and the offset becomes the body's
+    /// position, so it lands exactly where the file put it while still
+    /// obeying the centred-on-origin convention every primitive here uses.
+    ///
+    /// One undo step, like any other body add.
+    @discardableResult
+    public func importMesh(
+        from url: URL,
+        fileUnit: LengthUnit,
+        materialID: UUID? = nil
+    ) throws -> UUID {
+        let data = try Data(contentsOf: url)
+        let imported = try STLImporter.load(data, unit: fileUnit, projectUnit: state.lengthUnit)
+
+        let sourceName = url.lastPathComponent
+        let body = CADBody(
+            name: state.uniqueBodyName(base: url.deletingPathExtension().lastPathComponent),
+            primitive: .mesh(
+                MeshSpec(mesh: imported.mesh, sourceName: sourceName, sourceUnit: fileUnit)
+            ),
+            transform: BodyTransform(position: Vector3Expression(imported.origin)),
+            materialID: materialID
+        )
+
+        perform("Import \(sourceName)") { state in
+            state.bodies.append(body)
+        }
+        selectedBodyID = body.id
+        return body.id
+    }
+
     /// Mutates one body. `coalescingKey` should identify the specific field.
     public func updateBody(
         _ id: UUID,

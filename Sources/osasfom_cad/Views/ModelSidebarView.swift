@@ -22,7 +22,7 @@ struct ModelSidebarView: View {
                     .font(.headline)
                 Spacer()
                 Menu {
-                    ForEach(PrimitiveKind.allCases) { kind in
+                    ForEach(PrimitiveKind.creatableCases) { kind in
                         Button {
                             document.addBody(kind)
                         } label: {

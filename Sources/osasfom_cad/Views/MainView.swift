@@ -272,7 +272,7 @@ struct MainView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup {
-            ForEach(PrimitiveKind.allCases) { kind in
+            ForEach(PrimitiveKind.creatableCases) { kind in
                 Button {
                     document.addBody(kind)
                 } label: {
@@ -352,6 +352,7 @@ struct MainView: View {
         case .saveAs: saveProject(forcingPrompt: true)
         case .exportSolverDeck: exportSolverDeck()
         case .exportSTL: exportSTL()
+        case .importSTL: importSTL()
         case .zoomToFit: frameRequestToken += 1
         // Owned by RootView, which is what decides whether the window shows
         // the welcome screen or the editor.
@@ -455,6 +456,18 @@ struct MainView: View {
             try data.write(to: url, options: .atomic)
         } catch {
             alert = AlertContent(title: "Could not export", message: message(for: error))
+        }
+    }
+
+    private func importSTL() {
+        guard let choice = ProjectPanels.chooseSTLToImport(projectUnit: document.state.lengthUnit) else { return }
+        do {
+            try document.importMesh(from: choice.url, fileUnit: choice.unit)
+            // Frame the result: an imported mesh can land anywhere and at any
+            // scale, and a model that is off-screen reads as a failed import.
+            frameRequestToken += 1
+        } catch {
+            alert = AlertContent(title: "Could not import STL", message: message(for: error))
         }
     }
 

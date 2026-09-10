@@ -290,6 +290,15 @@ public struct ResolvedBody: Identifiable, Hashable, Sendable {
             let scaledRadius = radius * radiusScale
             let length = abs(end - begin)
             return Double.pi * scaledRadius * scaledRadius * abs(length * scale[axis])
+        case .mesh(let mesh):
+            // Signed-tetrahedron sum over the closed surface (divergence
+            // theorem). Meaningless for an open mesh, so that reports zero
+            // rather than a number the winding happens to produce.
+            guard mesh.isWatertight else { return 0 }
+            let raw = mesh.triangles.reduce(0.0) { total, triangle in
+                total + triangle.v0.dot(triangle.v1.cross(triangle.v2)) / 6
+            }
+            return abs(raw * scale.x * scale.y * scale.z)
         }
     }
 }

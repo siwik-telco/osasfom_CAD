@@ -47,7 +47,7 @@ struct BooleanOperationsSection: View {
         Menu {
             ForEach(BooleanKind.allCases) { kind in
                 Menu(kind.displayName) {
-                    ForEach(PrimitiveKind.allCases) { primitiveKind in
+                    ForEach(PrimitiveKind.creatableCases) { primitiveKind in
                         Button {
                             document.addBooleanOperation(to: bodyID, kind: kind, primitiveKind: primitiveKind)
                         } label: {
@@ -156,7 +156,7 @@ private struct BooleanOperationEditor: View {
                 }
             )
         ) {
-            ForEach(PrimitiveKind.allCases) { kind in
+            ForEach(PrimitiveKind.creatableCases) { kind in
                 Text(kind.displayName).tag(kind)
             }
         }

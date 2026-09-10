@@ -48,20 +48,27 @@ struct BodyInspectorView: View {
                 text: document.bodyBinding(bodyID, \.name, actionName: "Rename Body", field: "name")
             )
 
-            Picker(
-                "Primitive",
-                selection: Binding(
-                    get: { model.kind },
-                    set: { newKind in
-                        guard newKind != model.kind else { return }
-                        document.updateBody(bodyID, actionName: "Change Primitive") { body in
-                            body.primitive = body.primitive.converted(to: newKind)
+            if model.kind == .mesh {
+                // An imported mesh has no parametric equivalent to convert to
+                // or from, so this is a label rather than a picker — offering
+                // the change would only ever throw the triangles away.
+                LabeledContent("Primitive", value: PrimitiveKind.mesh.displayName)
+            } else {
+                Picker(
+                    "Primitive",
+                    selection: Binding(
+                        get: { model.kind },
+                        set: { newKind in
+                            guard newKind != model.kind else { return }
+                            document.updateBody(bodyID, actionName: "Change Primitive") { body in
+                                body.primitive = body.primitive.converted(to: newKind)
+                            }
                         }
+                    )
+                ) {
+                    ForEach(PrimitiveKind.creatableCases) { kind in
+                        Text(kind.displayName).tag(kind)
                     }
-                )
-            ) {
-                ForEach(PrimitiveKind.allCases) { kind in
-                    Text(kind.displayName).tag(kind)
                 }
             }
 
@@ -104,6 +111,9 @@ struct BodyInspectorView: View {
         case .box: return Set(Axis.allCases)
         case .sheet(let spec): return [spec.normal]
         case .cylinder(let spec): return [spec.axis]
+        // A mesh is centred on its own bounding box at import, so Position
+        // means the same thing it does for any centred primitive.
+        case .mesh: return []
         case nil: return []
         }
     }

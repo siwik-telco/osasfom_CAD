@@ -23,7 +23,10 @@ public enum BodySnapPoint {
 
         let localSnap: Vec3
         switch body.shape {
-        case .box, .sheet:
+        case .box, .sheet, .mesh:
+            // A mesh snaps to its bounding box: face centres and edge
+            // midpoints are still the points a user aims at, and snapping to
+            // an arbitrary triangle vertex would be noise, not help.
             localSnap = boxSnapPoint(localSize: body.shape.localSize, local: local)
         case .cylinder(let radius, let begin, let end, let axis):
             localSnap = cylinderSnapPoint(radius: radius, length: abs(end - begin), axis: axis, local: local)

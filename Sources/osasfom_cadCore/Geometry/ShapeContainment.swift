@@ -43,6 +43,13 @@ public enum ShapeContainment {
             let (first, second) = axis.perpendicular
             let radial = local[first] * local[first] + local[second] * local[second]
             return radial <= (radius + tol) * (radius + tol)
+
+        case .mesh(let mesh):
+            // No analytic form to widen by `tol`: an imported surface is
+            // whatever the triangles say. `TriangleMesh` ray-casts through a
+            // BVH, which is what keeps this affordable at the tens of
+            // millions of samples an FDTD run takes.
+            return mesh.contains(local)
         }
     }
 

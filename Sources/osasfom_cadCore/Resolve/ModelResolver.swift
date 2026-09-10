@@ -220,6 +220,14 @@ public enum ModelResolver {
             } else {
                 shape = nil
             }
+
+        case .mesh(let spec):
+            // Nothing to evaluate: the triangles are the geometry, already
+            // centred on the body's origin by `STLImporter`, so the body's
+            // position places them exactly like a box's centre would. The
+            // mesh rides through by reference — re-resolving on every edit
+            // must not rebuild its BVH.
+            shape = .mesh(spec.mesh)
         }
 
         var position = vector(transform.position, field: "transform.position")

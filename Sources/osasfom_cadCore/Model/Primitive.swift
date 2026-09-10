@@ -4,14 +4,25 @@ public enum PrimitiveKind: String, Codable, CaseIterable, Identifiable, Sendable
     case box
     case cylinder
     case sheet
+    /// An imported triangle mesh. Unlike the others it cannot be created from
+    /// nothing or converted to — it only ever arrives through `STLImporter` —
+    /// so UI that offers "add a primitive" or "change kind" must iterate
+    /// `creatableCases`, not `allCases`.
+    case mesh
 
     public var id: String { rawValue }
+
+    /// The kinds a user can create or convert between. Excludes `.mesh`:
+    /// there is no meaningful default triangle soup, and no inverse that
+    /// could turn a box into one.
+    public static var creatableCases: [PrimitiveKind] { [.box, .cylinder, .sheet] }
 
     public var displayName: String {
         switch self {
         case .box: return "Box"
         case .cylinder: return "Cylinder"
         case .sheet: return "Sheet"
+        case .mesh: return "Mesh"
         }
     }
 
@@ -20,6 +31,7 @@ public enum PrimitiveKind: String, Codable, CaseIterable, Identifiable, Sendable
         case .box: return "cube"
         case .cylinder: return "cylinder"
         case .sheet: return "square"
+        case .mesh: return "pyramid"
         }
     }
 }
@@ -185,6 +197,30 @@ public struct SheetSpec: Codable, Hashable, Sendable, ExpressionWalkable {
     }
 }
 
+/// An imported triangle mesh and where it came from.
+///
+/// Deliberately holds no expressions. Everything a variable could usefully
+/// drive — placement, rotation, scale — already lives on the body's transform,
+/// and the geometry itself is the file's, not a formula's.
+public struct MeshSpec: Codable, Hashable, Sendable, ExpressionWalkable {
+    /// The triangles, centred on the body's origin.
+    public var mesh: TriangleMesh
+    /// Original file name, shown in the inspector so a body stays traceable
+    /// to the file it came from.
+    public var sourceName: String
+    /// The unit the file was read as. Kept because STL carries no units, so
+    /// "it came in 25.4x too small" is a question the user will ask later.
+    public var sourceUnit: LengthUnit
+
+    public init(mesh: TriangleMesh, sourceName: String, sourceUnit: LengthUnit) {
+        self.mesh = mesh
+        self.sourceName = sourceName
+        self.sourceUnit = sourceUnit
+    }
+
+    public mutating func walkExpressions(_ transform: (inout Expression) -> Void) {}
+}
+
 /// A parametric primitive.
 ///
 /// Modelled as an enum with associated values so a box cannot carry a
@@ -194,12 +230,14 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
     case box(BoxSpec)
     case cylinder(CylinderSpec)
     case sheet(SheetSpec)
+    case mesh(MeshSpec)
 
     public var kind: PrimitiveKind {
         switch self {
         case .box: return .box
         case .cylinder: return .cylinder
         case .sheet: return .sheet
+        case .mesh: return .mesh
         }
     }
 
@@ -214,6 +252,11 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
         case .sheet(var spec):
             spec.walkExpressions(transform)
             self = .sheet(spec)
+        case .mesh:
+            // A mesh has no parametric fields: its geometry is the imported
+            // triangles, and everything a variable could drive (placement,
+            // scale) lives on the body's transform.
+            break
         }
     }
 
@@ -234,6 +277,11 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
 
     public var sheetSpec: SheetSpec? {
         if case .sheet(let spec) = self { return spec }
+        return nil
+    }
+
+    public var meshSpec: MeshSpec? {
+        if case .mesh(let spec) = self { return spec }
         return nil
     }
 
@@ -282,7 +330,10 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
                 spec.begin = Expression(bounds.minimum[existing.normal])
                 spec.end = Expression(bounds.maximum[existing.normal])
             }
-        case .cylinder:
+        case .cylinder, .mesh:
+            // Neither has a unique inverse — a cylinder's radius/length pair
+            // is under-determined by a box, and a mesh's extents come from its
+            // triangles. The UI must not offer the edit.
             break
         }
     }
@@ -322,6 +373,11 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
         case .box: return defaultBox
         case .cylinder: return defaultCylinder
         case .sheet: return defaultSheet
+        case .mesh:
+            // Unreachable through the UI, which offers only `creatableCases`.
+            // There is no empty mesh to hand back, so fall back to a box
+            // rather than make every caller handle an optional.
+            return defaultBox
         }
     }
 
@@ -331,6 +387,11 @@ public enum Primitive: Hashable, Sendable, ExpressionWalkable {
     /// axis-aligned extents are preserved and the rest comes from defaults.
     public func converted(to kind: PrimitiveKind) -> Primitive {
         guard kind != self.kind else { return self }
+        // A mesh has no parametric equivalent in either direction, and
+        // silently swapping an imported mesh for a default box would throw
+        // the file away. Callers offer `creatableCases`, so this is a
+        // belt-and-braces no-op rather than a reachable path.
+        guard kind != .mesh, self.kind != .mesh else { return self }
 
         switch (self, kind) {
         case (.box(let spec), .sheet):
@@ -423,6 +484,8 @@ extension Primitive: Codable {
             self = .cylinder(try CylinderSpec(from: decoder))
         case .sheet:
             self = .sheet(try SheetSpec(from: decoder))
+        case .mesh:
+            self = .mesh(try MeshSpec(from: decoder))
         }
     }
 
@@ -436,6 +499,8 @@ extension Primitive: Codable {
             try spec.encode(to: encoder)
         case .sheet(let spec):
             try spec.encode(to: encoder)
+        case .mesh(let spec):
+            try spec.encode(to: encoder)
         }
     }
 }
@@ -447,12 +512,16 @@ public enum ResolvedShape: Hashable, Sendable {
     /// as a body's position — not an extent centred on it.
     case cylinder(radius: Double, begin: Double, end: Double, axis: Axis)
     case sheet(size: Vec3, normal: Axis)
+    /// An imported triangle soup, already centred on the body's origin.
+    /// Carries the mesh by reference — see `TriangleMesh`.
+    case mesh(TriangleMesh)
 
     public var kind: PrimitiveKind {
         switch self {
         case .box: return .box
         case .cylinder: return .cylinder
         case .sheet: return .sheet
+        case .mesh: return .mesh
         }
     }
 
@@ -468,6 +537,8 @@ public enum ResolvedShape: Hashable, Sendable {
             var size = Vec3(repeating: radius * 2)
             size[axis] = abs(end - begin)
             return size
+        case .mesh(let mesh):
+            return mesh.bounds.size
         }
     }
 

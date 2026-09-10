@@ -68,6 +68,9 @@ struct osasfom_cad: App {
             Button("Export Solver Deck…") { postDocumentCommand(.exportSolverDeck) }
                 .keyboardShortcut("e", modifiers: .command)
 
+            Button("Import STL…") { postDocumentCommand(.importSTL) }
+                .keyboardShortcut("i", modifiers: .command)
+
             Button("Export STL…") { postDocumentCommand(.exportSTL) }
                 .keyboardShortcut("e", modifiers: [.command, .shift])
 

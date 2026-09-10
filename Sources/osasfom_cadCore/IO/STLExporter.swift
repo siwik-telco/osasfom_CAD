@@ -91,6 +91,10 @@ public enum STLExporter {
             return boxTriangles(size: size)
         case .cylinder(let radius, let begin, let end, let axis):
             return cylinderTriangles(radius: radius, length: abs(end - begin), axis: axis, segments: max(8, segments))
+        case .mesh(let mesh):
+            // Already the surface, already centred on the body's origin —
+            // `segments` has nothing to tessellate.
+            return mesh.triangles
         }
     }
 

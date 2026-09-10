@@ -104,6 +104,13 @@ public enum SceneGeometryFactory {
             plane.widthSegmentCount = 1
             plane.heightSegmentCount = 1
             return plane
+
+        case .mesh(let mesh):
+            // The imported triangles are the geometry. Flat-shaded like a CSG
+            // result, so a faceted STL reads as the facets it actually has
+            // rather than being smoothed into something the solver isn't
+            // seeing.
+            return makeMeshGeometry(mesh.triangles)
         }
     }
 
@@ -120,6 +127,10 @@ public enum SceneGeometryFactory {
             // 90 radians wrapped — while a Y-aligned one looked fine because
             // its rotation is zero in either unit, which is how it survived.
             return degreesToRadians(axis.rotationFromYAxisDegrees)
+
+        case .mesh:
+            // Imported triangles carry their own orientation.
+            return SCNVector3Zero
 
         case .sheet(let size, let normal):
             guard size[normal] == 0 else { return SCNVector3Zero }

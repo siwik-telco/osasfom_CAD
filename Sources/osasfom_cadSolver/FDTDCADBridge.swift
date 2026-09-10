@@ -301,25 +301,44 @@ public final class EngineHandle {
 }
 
 /// A resistively-terminated lumped port: `Operator.addLumpedResistor` stamps
-/// the port's reference impedance directly onto this edge's conductance
-/// (so the edge is no longer a lossless material cell but an actual R-loaded
-/// node), and this extension adds the Thevenin source voltage on top each
+/// the port's reference impedance directly onto the gap edges' conductance
+/// (so they are no longer lossless material cells but actual R-loaded
+/// nodes), and this extension adds the Thevenin source voltage on top each
 /// step and records V(t)/I(t) for the S-parameter DFT. This is the same
 /// two-part scheme openEMS uses for a lumped-port excitation (soft voltage
 /// injection at a resistively-stamped edge), not a full openEMS
 /// `Operator_Ext_LumpedElement` port — port current is read from the
 /// adjacent H-field (`Engine.getCurr`) as a proxy for the true Ampere's-law
-/// loop current, which is exact only when the gap spans exactly one Yee
-/// edge (true for the meshes `GridMesher` produces, since it always inserts
-/// a fixed line at both port terminals).
+/// loop current.
+///
+/// The gap is a *chain* of Yee edges, not one edge. `GridMesher` pins a line
+/// at both terminals but keeps filling in between them, so an 8 mm gap on a
+/// 3 mm mesh is three cells. Those edges are in series: each carries its own
+/// share of the reference impedance and of the source voltage, and the port
+/// voltage is their sum — the line integral over the whole gap. Loading only
+/// the first edge (what this did before) left the resistor and the generator
+/// pressed against one terminal with bare vacuum across the rest of the gap,
+/// and measured V over a fraction of the integration path, so Zin and S11
+/// came out wrong by roughly that fraction.
 public final class LumpedPortExtension: EngineExtension {
+    /// One Yee edge of the gap, and the fraction of the gap length it spans.
+    /// Shares sum to 1 across a port.
+    public struct Edge {
+        public let pos: (Int, Int, Int)
+        public let share: Double
+
+        public init(pos: (Int, Int, Int), share: Double) {
+            self.pos = pos
+            self.share = share
+        }
+    }
+
     public let priority = 100
     public let extensionName: String
 
     private let handle: EngineHandle
     private let directionIndex: Int
-    private let gridPos: (Int, Int, Int)
-    private let gapLengthMeters: Double
+    private let edges: [Edge]
     private let excitation: Excitation
     private let frequency: FrequencyRange
     private let isExcited: Bool
@@ -334,8 +353,7 @@ public final class LumpedPortExtension: EngineExtension {
         name: String,
         handle: EngineHandle,
         directionIndex: Int,
-        gridPos: (Int, Int, Int),
-        gapLengthMeters: Double,
+        edges: [Edge],
         excitation: Excitation,
         frequency: FrequencyRange,
         isExcited: Bool,
@@ -345,8 +363,7 @@ public final class LumpedPortExtension: EngineExtension {
         self.extensionName = name
         self.handle = handle
         self.directionIndex = directionIndex
-        self.gridPos = gridPos
-        self.gapLengthMeters = gapLengthMeters
+        self.edges = edges
         self.excitation = excitation
         self.frequency = frequency
         self.isExcited = isExcited
@@ -358,23 +375,44 @@ public final class LumpedPortExtension: EngineExtension {
     public func doPostVoltageUpdates() {}
 
     public func apply2Voltages() {
-        guard let engine = handle.engine else { return }
+        guard let engine = handle.engine, !edges.isEmpty else { return }
         let t = Double(engine.numTS) * dT()
+
         if isExcited {
             let waveform = ExcitationWaveformSampler.value(excitation: excitation, frequency: frequency, timeSeconds: t)
             let injected = amplitude * waveform
-            let existing = engine.getVolt(directionIndex, gridPos.0, gridPos.1, gridPos.2)
-            engine.setVolt(directionIndex, gridPos.0, gridPos.1, gridPos.2, existing + injected)
+            // One generator sits in the gap, so its voltage divides across
+            // the series edges by length. Summing the edges below hands back
+            // exactly the amplitude that was asked for.
+            for edge in edges {
+                let existing = engine.getVolt(directionIndex, edge.pos.0, edge.pos.1, edge.pos.2)
+                engine.setVolt(
+                    directionIndex,
+                    edge.pos.0, edge.pos.1, edge.pos.2,
+                    existing + injected * edge.share
+                )
+            }
         }
-        let v = engine.getVolt(directionIndex, gridPos.0, gridPos.1, gridPos.2)
-        // curlH's +n reference (Ampère's law, matching how curl(H) drives
-        // +dE/dt in the update this edge uses) is the current flowing *out*
-        // of the port into the rest of the circuit loop, i.e. opposite to
-        // the a/b-wave convention's "current into the port from the
-        // source". Confirmed empirically too: without this flip, |S11|
-        // comes out > 1 everywhere (impossible for this passive one-port) —
-        // exactly the mirrored curve 1/S11 produces.
-        let i = -engine.curlH(direction: directionIndex, pos: gridPos)
+
+        // V is the line integral over the whole gap: the sum of the edge
+        // voltages, not one of them.
+        var v = 0.0
+        var i = 0.0
+        for edge in edges {
+            v += engine.getVolt(directionIndex, edge.pos.0, edge.pos.1, edge.pos.2)
+            // curlH's +n reference (Ampère's law, matching how curl(H) drives
+            // +dE/dt in the update this edge uses) is the current flowing *out*
+            // of the port into the rest of the circuit loop, i.e. opposite to
+            // the a/b-wave convention's "current into the port from the
+            // source". Confirmed empirically too: without this flip, |S11|
+            // comes out > 1 everywhere (impossible for this passive one-port) —
+            // exactly the mirrored curve 1/S11 produces.
+            i += -engine.curlH(direction: directionIndex, pos: edge.pos)
+        }
+        // Series edges carry one current; averaging the per-edge readings
+        // only damps the discretisation noise in it.
+        i /= Double(edges.count)
+
         timeSeconds.append(t)
         voltage.append(v)
         current.append(i)
@@ -383,6 +421,73 @@ public final class LumpedPortExtension: EngineExtension {
     public func doPreCurrentUpdates() {}
     public func doPostCurrentUpdates() {}
     public func apply2Current() {}
+}
+
+extension LumpedPortExtension {
+    /// Maps a port's two terminals onto the Yee edges between them.
+    ///
+    /// `GridMesher` pins a fixed line at `bounds.minimum` and `bounds.maximum`
+    /// on every axis, so both terminals land exactly on a line and the two
+    /// transverse coordinates land exactly on the port's own axis. What it
+    /// does *not* do is leave the span between them undivided — `fillInterval`
+    /// still fills it to the target cell size. Every edge in that span belongs
+    /// to the port.
+    ///
+    /// Edge `i` along an axis spans `lines[i] ... lines[i + 1]`, so a gap
+    /// between line indices `lower` and `upper` owns edges `lower ..< upper`.
+    static func gridEdges(
+        for port: ResolvedPort,
+        unit: LengthUnit,
+        lines: GridMesher.Lines
+    ) -> [Edge] {
+        let directionIndex = axisIndex(port.direction)
+        let axisLines = lines.metersLines[directionIndex]
+        guard axisLines.count > 1 else { return [] }
+
+        // Transverse axes are degenerate (minimum == maximum), so their
+        // "centre" is the port line itself.
+        var base = (0, 0, 0)
+        for axis in Axis.allCases where axis != port.direction {
+            let i = axisIndex(axis)
+            let centre = (port.bounds.minimum[axis] + port.bounds.maximum[axis]) / 2
+            let index = nearestIndex(lines.metersLines[i], unit.toMeters(centre))
+            switch i {
+            case 0: base.0 = index
+            case 1: base.1 = index
+            default: base.2 = index
+            }
+        }
+
+        let first = nearestIndex(axisLines, unit.toMeters(port.bounds.minimum[port.direction]))
+        let last = nearestIndex(axisLines, unit.toMeters(port.bounds.maximum[port.direction]))
+        let lower = min(first, last)
+        let upper = max(first, last)
+
+        let span: Range<Int>
+        if lower < upper {
+            span = lower..<upper
+        } else {
+            // A gap thinner than one cell still has to drive something: fall
+            // back to the single edge at the lower terminal. Clamped to the
+            // last edge, since edge `i` reads `lines[i + 1]`.
+            let start = min(lower, axisLines.count - 2)
+            span = start..<(start + 1)
+        }
+
+        let lengths = span.map { axisLines[$0 + 1] - axisLines[$0] }
+        let total = lengths.reduce(0, +)
+        guard total > 0 else { return [] }
+
+        return zip(span, lengths).map { index, length in
+            var pos = base
+            switch directionIndex {
+            case 0: pos.0 = index
+            case 1: pos.1 = index
+            default: pos.2 = index
+            }
+            return Edge(pos: pos, share: length / total)
+        }
+    }
 }
 
 // MARK: - 5. Post-processing: DFT -> S-parameters
@@ -802,39 +907,30 @@ public final class SimulationRunner: ObservableObject {
         for port in resolved.simulation.ports where port.kind == .lumped {
             let directionIndex = axisIndex(port.direction)
 
-            // The port's own axis: the gap's *start* terminal, not its
-            // center — GridMesher always inserts a fixed line at both
-            // port.bounds.minimum/maximum, so this lands exactly on a grid
-            // line and the gap spans exactly one Yee edge in that direction.
-            // The two transverse axes just need the nearest node to center.
-            var gridPos = (0, 0, 0)
-            for axis in Axis.allCases {
-                let i = axisIndex(axis)
-                let valueMeters: Double
-                if axis == port.direction {
-                    valueMeters = unit.toMeters(port.bounds.minimum[axis])
-                } else {
-                    let center = (port.bounds.minimum[axis] + port.bounds.maximum[axis]) / 2
-                    valueMeters = unit.toMeters(center)
-                }
-                let index = nearestIndex(lines.metersLines[i], valueMeters)
-                switch i {
-                case 0: gridPos.0 = index
-                case 1: gridPos.1 = index
-                default: gridPos.2 = index
-                }
-            }
+            // Every Yee edge between the two terminals, not just the first:
+            // the mesher subdivides the gap whenever it is wider than about
+            // a cell and a half.
+            let edges = LumpedPortExtension.gridEdges(for: port, unit: unit, lines: lines)
+            guard !edges.isEmpty else { continue }
 
-            // Stamp the port's reference impedance directly onto this edge
-            // so it is a real R-loaded node, not just a lossless soft source.
-            op.addLumpedResistor(direction: directionIndex, pos: gridPos, ohms: port.impedanceOhm)
+            // Stamp the port's reference impedance across those edges so it
+            // is a real R-loaded gap, not just a lossless soft source. They
+            // are in series, so each takes the share of R that matches its
+            // share of the gap length and the chain adds back up to the
+            // reference impedance however the mesher divided the gap.
+            for edge in edges {
+                op.addLumpedResistor(
+                    direction: directionIndex,
+                    pos: edge.pos,
+                    ohms: port.impedanceOhm * edge.share
+                )
+            }
 
             let ext = LumpedPortExtension(
                 name: "Port_\(port.name)",
                 handle: handle,
                 directionIndex: directionIndex,
-                gridPos: gridPos,
-                gapLengthMeters: unit.toMeters(port.gapLength),
+                edges: edges,
                 excitation: setup.excitation,
                 frequency: setup.frequency,
                 isExcited: port.isExcited,
@@ -1154,22 +1250,27 @@ public final class SimulationRunner: ObservableObject {
         return min(sortedLines[idx] - sortedLines[idx - 1], sortedLines[idx + 1] - sortedLines[idx])
     }
 
-    private func axisIndex(_ axis: Axis) -> Int {
-        switch axis {
-        case .x: return 0
-        case .y: return 1
-        case .z: return 2
-        }
-    }
+}
 
-    private func nearestIndex(_ lines: [Double], _ value: Double) -> Int {
-        guard !lines.isEmpty else { return 0 }
-        var bestIndex = 0
-        var bestDistance = Double.greatestFiniteMagnitude
-        for (index, line) in lines.enumerated() {
-            let d = abs(line - value)
-            if d < bestDistance { bestDistance = d; bestIndex = index }
-        }
-        return bestIndex
+// MARK: - Grid index helpers
+
+/// Shared by the runner and by `LumpedPortExtension.gridEdges`, which has to
+/// resolve the same coordinates onto the same lines.
+func axisIndex(_ axis: Axis) -> Int {
+    switch axis {
+    case .x: return 0
+    case .y: return 1
+    case .z: return 2
     }
+}
+
+func nearestIndex(_ lines: [Double], _ value: Double) -> Int {
+    guard !lines.isEmpty else { return 0 }
+    var bestIndex = 0
+    var bestDistance = Double.greatestFiniteMagnitude
+    for (index, line) in lines.enumerated() {
+        let d = abs(line - value)
+        if d < bestDistance { bestDistance = d; bestIndex = index }
+    }
+    return bestIndex
 }

@@ -533,6 +533,14 @@ public final class Operator {
     private var EC_G: [[Double]] = [[], [], []]
     private var EC_L: [[Double]] = [[], [], []]
     private var EC_R: [[Double]] = [[], [], []]
+    /// Conductance from the *material* alone, without the absorbing layer or
+    /// any lumped load. `calcPEC` must judge metal on the material only: the
+    /// absorber and a port resistor both add large conductance, and treating
+    /// either as metal would wall off the boundary or short out the port.
+    private var EC_Gmaterial: [[Double]] = [[], [], []]
+
+    /// Number of edges the last `calcPEC()` forced to perfect conductor.
+    public private(set) var pecEdgeCount = 0
 
     // FDTD update coefficients consumed by Engine
     public private(set) var vv: FDTDArray!
@@ -656,6 +664,7 @@ public final class Operator {
             EC_G[n] = [Double](repeating: 0, count: size)
             EC_L[n] = [Double](repeating: 0, count: size)
             EC_R[n] = [Double](repeating: 0, count: size)
+            EC_Gmaterial[n] = [Double](repeating: 0, count: size)
         }
     }
 
@@ -666,7 +675,10 @@ public final class Operator {
 
     /// Port of Operator::Calc_ECPos: effective material -> C,G,L,R at an edge.
     /// This is where your CAD/material provider is consulted (was CSX lookup).
-    private func calcECPos(direction ny: Int, pos: (Int, Int, Int)) -> (C: Double, G: Double, L: Double, R: Double) {
+    private func calcECPos(
+        direction ny: Int,
+        pos: (Int, Int, Int)
+    ) -> (C: Double, G: Double, L: Double, R: Double, materialG: Double) {
         let effMat = calcEffMatPos(direction: ny, pos: pos)
 
         if let m_epsR { m_epsR.set(ny, pos, effMat.eps) }
@@ -684,6 +696,8 @@ public final class Operator {
         let L = delta2 != 0 ? effMat.mue   * area2 / delta2 : 0
         var R = delta2 != 0 ? effMat.sigma * area2 / delta2 : 0
 
+        let materialG = G
+
         let absorbing = absorbingLoss(direction: ny, pos: pos)
         if delta1 != 0 { G += absorbing.electricSPerM * area1 / delta1 }
         if delta2 != 0 { R += absorbing.magneticOhmPerM * area2 / delta2 }
@@ -695,7 +709,7 @@ public final class Operator {
             G += extra
         }
 
-        return (C, G, L, R)
+        return (C, G, L, R, materialG)
     }
 
     /// Graded electric/magnetic loss from `absorbingBoundary`, evaluated at
@@ -933,6 +947,7 @@ public final class Operator {
                         EC_G[n][i] = ec.G
                         EC_L[n][i] = ec.L
                         EC_R[n][i] = ec.R
+                        EC_Gmaterial[n][i] = ec.materialG
                     }
                 }
             }
@@ -968,10 +983,60 @@ public final class Operator {
             }
         }
 
+        calcPEC()
+
         // release EC scratch buffers, matches original cleanup
-        for n in 0..<3 { EC_C[n] = []; EC_G[n] = []; EC_L[n] = []; EC_R[n] = [] }
+        for n in 0..<3 {
+            EC_C[n] = []; EC_G[n] = []; EC_L[n] = []; EC_R[n] = []; EC_Gmaterial[n] = []
+        }
 
         return 0
+    }
+
+    /// Beyond this the semi-implicit voltage coefficient turns negative.
+    ///
+    /// `vv = (1 - x)/(1 + x)` with `x = dT·G/2C` approximates the true decay
+    /// `exp(-2x)`, and does it well while `x` is small. At `x = 1` it reaches
+    /// zero, and past that it goes *negative* — the field would invert every
+    /// timestep instead of being absorbed, which no passive lossy medium can
+    /// do. A material that lossy is a conductor, and perfect conductor is the
+    /// only valid limit.
+    static let pecLossThreshold = 1.0
+
+    /// Port of `Operator::CalcPEC()` — zero the voltage operator on edges
+    /// inside metal.
+    ///
+    /// openEMS finds these by asking CSX for a METAL property at the edge.
+    /// This model has no separate metal property; it expresses metal as a
+    /// conductivity, so the same edges are identified numerically, by the
+    /// point at which the update can no longer represent the loss.
+    ///
+    /// Without this pass a copper or PEC edge got `vv = -0.999999` instead of
+    /// `0`: the field inverted and persisted rather than being annihilated,
+    /// making every conductor in the model a spurious resonator and shifting
+    /// resonant frequencies well outside the mesh error.
+    @discardableResult
+    public func calcPEC() -> Int {
+        var count = 0
+        for n in 0..<3 {
+            for x in 0..<numLines.0 {
+                for y in 0..<numLines.1 {
+                    for z in 0..<numLines.2 {
+                        let pos = (x, y, z)
+                        let i = flatIndex(pos)
+                        let C = EC_C[n][i]
+                        guard C > 0 else { continue }
+                        let G = EC_Gmaterial[n][i]
+                        guard G > 0, dT * G / (2 * C) >= Self.pecLossThreshold else { continue }
+                        vv.set(n, pos, 0)
+                        vi.set(n, pos, 0)
+                        count += 1
+                    }
+                }
+            }
+        }
+        pecEdgeCount = count
+        return count
     }
 
     // MARK: Timestep (Rennings dissertation, variant 1 / 3 — CalcTimestep_Var1)

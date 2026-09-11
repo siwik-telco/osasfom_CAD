@@ -89,7 +89,18 @@ public enum GridMesher {
                 fixed.insert(value)
             }
 
-            let sortedFixed = fixed.sorted().filter { $0 >= domain.minimum[axis] && $0 <= domain.maximum[axis] }
+            // Coalesce fixed lines that are the same coordinate to within
+            // rounding. Two bodies sharing a face routinely disagree in the
+            // last bit — a substrate's top at 1.575 and the patch's bottom at
+            // 1.575 arrive via different arithmetic — which leaves a
+            // zero-width interval between them. Uniform fill shrugged that
+            // off; a geometric ramp seeded from a 1e-16 "cell" does not.
+            let withinDomain = fixed.sorted().filter { $0 >= domain.minimum[axis] && $0 <= domain.maximum[axis] }
+            var sortedFixed: [Double] = []
+            for value in withinDomain {
+                if let last = sortedFixed.last, value - last < minCell * 1e-3 { continue }
+                sortedFixed.append(value)
+            }
 
             // Docelowy rozmiar komórki w danym punkcie: bazowy, chyba że
             // punkt leży wewnątrz regionu refinement - wtedy najmniejszy
@@ -104,11 +115,36 @@ public enum GridMesher {
                 return max(target, minCell)
             }
 
+            // Each interval's own target first, so a fill can see how fine its
+            // neighbours are and ramp toward them instead of stepping.
+            let intervalCount = max(sortedFixed.count - 1, 0)
+            let targets = (0..<intervalCount).map { i in
+                targetCellSize(at: (sortedFixed[i] + sortedFixed[i + 1]) / 2)
+            }
+
+            // What a neighbour would *actually* use, which is not its target:
+            // an interval shorter than its target gets one cell the width of
+            // the interval. That is where the fine cells in a board come from
+            // — a 0.4 mm substrate layer pinned between two fixed lines, with
+            // a 3.5 mm target — so grading against targets alone would ramp
+            // toward nothing and leave the step in place.
+            let uniformCell = (0..<intervalCount).map { i -> Double in
+                let length = sortedFixed[i + 1] - sortedFixed[i]
+                let count = max(1, Int((length / targets[i]).rounded()))
+                return length / Double(count)
+            }
+
             var lines: [Double] = []
-            for i in 0..<max(sortedFixed.count - 1, 0) {
-                let a = sortedFixed[i]
-                let b = sortedFixed[i + 1]
-                lines.append(contentsOf: fillInterval(a: a, b: b, growth: growth, targetAt: targetCellSize))
+            for i in 0..<intervalCount {
+                lines.append(contentsOf: fillInterval(
+                    a: sortedFixed[i],
+                    b: sortedFixed[i + 1],
+                    target: targets[i],
+                    startCell: i > 0 ? uniformCell[i - 1] : uniformCell[i],
+                    endCell: i + 1 < intervalCount ? uniformCell[i + 1] : uniformCell[i],
+                    growth: growth,
+                    minimum: minCell
+                ))
             }
             if let last = sortedFixed.last {
                 lines.append(last)
@@ -136,30 +172,112 @@ public enum GridMesher {
         return Lines(metersLines: [xLines, yLines, zLines])
     }
 
-    /// Wypełnia przedział [a, b] liniami zbiegającymi do `targetAt(x)`,
-    /// z ograniczonym narastaniem między sąsiednimi komórkami (uproszczona
-    /// wersja SmoothMeshLines z openEMS/CSXCAD).
+    /// Fills `[a, b)` with lines that reach `target` in the middle while
+    /// ramping geometrically toward whatever the neighbouring intervals use.
+    ///
+    /// `maxGrowthRatio` used to be accepted, stored, written into the solver
+    /// deck and then discarded — every interval was divided uniformly, so cell
+    /// size stepped abruptly at each fixed line. A board could go from 0.4 mm
+    /// inside its substrate to 3.5 mm one cell later. That is a numerical
+    /// discontinuity in its own right, and it is what the Yee coefficients are
+    /// least forgiving of.
+    ///
+    /// `a` is included and `b` is not, so consecutive intervals join without
+    /// duplicating a fixed line — and the fixed lines themselves never move,
+    /// because the cell sizes are normalised to fill the span exactly.
     private static func fillInterval(
-        a: Double, b: Double, growth: Double, targetAt: (Double) -> Double
+        a: Double,
+        b: Double,
+        target: Double,
+        startCell: Double,
+        endCell: Double,
+        growth: Double,
+        minimum: Double
     ) -> [Double] {
-        guard b > a else { return [a] }
-        let target = targetAt((a + b) / 2)
+        guard b > a, target > 0 else { return [a] }
         let length = b - a
-        var count = max(1, Int((length / target).rounded()))
-
-        // Sprawdź, czy jednorodny podział mieści się w limicie narostu
-        // względem sąsiadów o innym targecie - w tej uproszczonej wersji
-        // po prostu ograniczamy liczbę komórek z góry, żeby uniknąć
-        // eksplozji przy bardzo małych regionach refinement.
-        let maxReasonableCells = 20_000
-        count = min(count, maxReasonableCells)
+        let sizes = gradedCellSizes(
+            length: length,
+            target: target,
+            startCell: startCell,
+            endCell: endCell,
+            growth: growth,
+            minimum: minimum
+        )
 
         var lines: [Double] = []
-        for i in 0..<count {
-            lines.append(a + length * Double(i) / Double(count))
+        lines.reserveCapacity(sizes.count)
+        var x = a
+        for size in sizes.dropLast() {
+            lines.append(x)
+            x += size
         }
-        _ = growth // zarezerwowane pod pełną wersję z narastaniem geometrycznym
+        lines.append(x)
         return lines
+    }
+
+    /// Cell sizes spanning `length`: a geometric ramp up from each end's
+    /// neighbour, `target` across the middle, normalised to fit exactly.
+    static func gradedCellSizes(
+        length: Double,
+        target: Double,
+        startCell: Double,
+        endCell: Double,
+        growth: Double,
+        minimum: Double = 0
+    ) -> [Double] {
+        let maxReasonableCells = 20_000
+        guard length > 0, target > 0 else { return [] }
+
+        func uniform() -> [Double] {
+            let count = min(max(1, Int((length / target).rounded())), maxReasonableCells)
+            return Array(repeating: length / Double(count), count: count)
+        }
+
+        let ratio = max(growth, 1.0)
+        guard ratio > 1.0000001 else { return uniform() }
+
+        /// Sizes stepping up from a finer neighbour toward `target`. Empty
+        /// when the neighbour is already as coarse — nothing to ramp.
+        func ramp(from neighbour: Double) -> [Double] {
+            guard neighbour > 0, neighbour < target else { return [] }
+            var sizes: [Double] = []
+            var size = neighbour * ratio
+            while size < target, sizes.count < maxReasonableCells {
+                sizes.append(size)
+                size *= ratio
+            }
+            return sizes
+        }
+
+        // Floored at `minCellSize`: a ramp is only ever meant to bridge two
+        // real cell sizes, never to chase a degenerate one down toward zero.
+        let floor = Swift.max(minimum, 0)
+        var head = ramp(from: Swift.max(Swift.min(startCell, target), floor))
+        var tail = Array(ramp(from: Swift.max(Swift.min(endCell, target), floor)).reversed())
+
+        // A short interval cannot hold both ramps; drop from the longer one
+        // until they fit, so the finer end keeps its grading.
+        while head.reduce(0, +) + tail.reduce(0, +) > length, !(head.isEmpty && tail.isEmpty) {
+            if head.count >= tail.count, !head.isEmpty {
+                head.removeLast()
+            } else if !tail.isEmpty {
+                tail.removeFirst()
+            }
+        }
+
+        let remaining = length - head.reduce(0, +) - tail.reduce(0, +)
+        let middle = remaining > 0 ? max(Int((remaining / target).rounded()), 0) : 0
+        let sizes = head + Array(repeating: target, count: middle) + tail
+        if sizes.isEmpty { return uniform() }
+        if sizes.count > maxReasonableCells { return uniform() }
+
+        // The fixed lines are boundaries the mesher promised to land on, so
+        // the sizes are scaled to span the interval exactly rather than
+        // letting rounding drift the far end.
+        let total = sizes.reduce(0, +)
+        guard total > 0 else { return uniform() }
+        return sizes.map { $0 * length / total }
     }
 }
 
@@ -265,6 +383,116 @@ public final class CADMaterialProvider: MaterialProvider {
     }
 }
 
+
+// MARK: - 2b. Zero-thickness conductors
+
+/// Maps infinitely thin perfect conductors onto the Yee edges they occupy.
+///
+/// A sheet with no thickness is drawn by the viewport, snapped to by the
+/// mesher, and *invisible to the solver*: `calcEffMatPos` averages material
+/// over cell volumes, and a surface has none. Probing the material at a patch
+/// drawn this way gives σ = 1e7 exactly on the plane and 0 one nanometre off
+/// it, while the quarter-cell sampler only ever asks at quarter-cell offsets —
+/// so the conductor contributed nothing and a patch antenna fed against one
+/// reflected everything, flat across the band.
+///
+/// The fix is the standard one: stop treating it as a material and impose the
+/// boundary condition. Tangential E vanishes on a perfect conductor, so every
+/// edge lying in the sheet's plane and inside its outline is forced to zero.
+public enum ZeroThicknessConductors {
+
+    /// Edges to force, for every visible body that is a zero-thickness sheet
+    /// of a perfectly conducting material.
+    ///
+    /// Rotated sheets are skipped: a plane at an angle does not lie along Yee
+    /// edges, and staircasing it silently would be worse than leaving it to
+    /// the (unchanged, still volumetric) material path. `warnings` names any
+    /// that were skipped so the caller can surface them.
+    public static func edges(
+        bodies: [ResolvedBody],
+        materials: [MaterialDefinition],
+        unit: LengthUnit,
+        lines: GridMesher.Lines,
+        warnings: inout [String]
+    ) -> [(direction: Int, pos: (Int, Int, Int))] {
+        let byID = Dictionary(materials.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var result: [(direction: Int, pos: (Int, Int, Int))] = []
+
+        for body in bodies where body.isVisible {
+            guard case .sheet(let size, let normal) = body.shape, size[normal] == 0 else { continue }
+            guard let material = byID[body.materialID],
+                  material.kind == .perfectElectricConductor else { continue }
+
+            guard body.isAxisAligned else {
+                warnings.append(
+                    "“\(body.name)” is a zero-thickness sheet that has been rotated. A tilted surface does not "
+                        + "lie along grid edges, so it is not simulated as a conductor. Give it a thickness, or "
+                        + "align it with an axis."
+                )
+                continue
+            }
+
+            let bounds = body.axisAlignedBounds
+            let normalIndex = axisIndex(normal)
+            let planeLines = lines.metersLines[normalIndex]
+            let planeIndex = nearestIndex(planeLines, unit.toMeters(bounds.minimum[normal]))
+
+            // The two in-plane axes carry the tangential field.
+            let (first, second) = normal.perpendicular
+            let firstIndex = axisIndex(first), secondIndex = axisIndex(second)
+            let firstLines = lines.metersLines[firstIndex]
+            let secondLines = lines.metersLines[secondIndex]
+
+            let firstLow = nearestIndex(firstLines, unit.toMeters(bounds.minimum[first]))
+            let firstHigh = nearestIndex(firstLines, unit.toMeters(bounds.maximum[first]))
+            let secondLow = nearestIndex(secondLines, unit.toMeters(bounds.minimum[second]))
+            let secondHigh = nearestIndex(secondLines, unit.toMeters(bounds.maximum[second]))
+            guard firstHigh > firstLow, secondHigh > secondLow else {
+                warnings.append(
+                    "“\(body.name)” is smaller than one mesh cell, so it covers no grid edges and is not "
+                        + "simulated. Refine the mesh around it, or give it a size the mesh can resolve."
+                )
+                continue
+            }
+
+            func position(_ a: Int, _ b: Int) -> (Int, Int, Int) {
+                var pos = (0, 0, 0)
+                switch normalIndex {
+                case 0: pos.0 = planeIndex
+                case 1: pos.1 = planeIndex
+                default: pos.2 = planeIndex
+                }
+                switch firstIndex {
+                case 0: pos.0 = a
+                case 1: pos.1 = a
+                default: pos.2 = a
+                }
+                switch secondIndex {
+                case 0: pos.0 = b
+                case 1: pos.1 = b
+                default: pos.2 = b
+                }
+                return pos
+            }
+
+            // An edge belongs to the sheet when it lies inside the outline.
+            // Edge `i` spans node i to i+1, so the along-axis index stops one
+            // short while the transverse one includes the far boundary.
+            for a in firstLow..<firstHigh {
+                for b in secondLow...secondHigh {
+                    result.append((direction: firstIndex, pos: position(a, b)))
+                }
+            }
+            for a in firstLow...firstHigh {
+                for b in secondLow..<secondHigh {
+                    result.append((direction: secondIndex, pos: position(a, b)))
+                }
+            }
+        }
+        return result
+    }
+}
+
 // MARK: - 3. Excitation waveform (Gaussian pulse / sinusoidal / step)
 
 public enum ExcitationWaveformSampler {
@@ -320,7 +548,28 @@ public enum ExcitationWaveformSampler {
     }
 }
 
-// MARK: - 4. Lumped port as EngineExtension
+// MARK: - 4. Ports as EngineExtensions
+
+/// Anything that records a port's time series for the S-parameter DFT.
+///
+/// Exists so post-processing does not care which kind of port produced the
+/// waveforms. The one thing the two kinds genuinely disagree about is the
+/// reference impedance: a lumped port has a fixed one the user typed, while a
+/// waveguide mode's wave impedance is *dispersive* — it rises without bound as
+/// the frequency approaches cutoff and does not exist below it. Hence a
+/// function of frequency, and one that is allowed to refuse.
+public protocol PortRecorder: AnyObject {
+    var extensionName: String { get }
+    var timeSeconds: [Double] { get }
+    /// Modal voltage for a lumped port; modal transverse-E amplitude for a
+    /// waveguide. Either way, the quantity that pairs with `current` through
+    /// `referenceImpedance`.
+    var voltage: [Double] { get }
+    var current: [Double] { get }
+    func referenceImpedance(atHertz hertz: Double) -> Double?
+}
+
+// MARK: - 4a. Lumped port
 
 /// Uchwyt przekazywany do rozszerzeń, bo w chwili tworzenia (Operator.
 /// extensionFactories) obiekt Engine jeszcze nie istnieje - Engine
@@ -350,7 +599,7 @@ public final class EngineHandle {
 /// pressed against one terminal with bare vacuum across the rest of the gap,
 /// and measured V over a fraction of the integration path, so Zin and S11
 /// came out wrong by roughly that fraction.
-public final class LumpedPortExtension: EngineExtension {
+public final class LumpedPortExtension: EngineExtension, PortRecorder {
     /// One Yee edge of the gap, and the fraction of the gap length it spans.
     /// Shares sum to 1 across a port.
     public struct Edge {
@@ -369,6 +618,9 @@ public final class LumpedPortExtension: EngineExtension {
     private let handle: EngineHandle
     private let directionIndex: Int
     private let edges: [Edge]
+    /// The reference impedance stamped across the gap. Frequency-independent,
+    /// unlike a waveguide mode's.
+    private let impedanceOhm: Double
     private let excitation: Excitation
     private let frequency: FrequencyRange
     private let isExcited: Bool
@@ -384,6 +636,7 @@ public final class LumpedPortExtension: EngineExtension {
         handle: EngineHandle,
         directionIndex: Int,
         edges: [Edge],
+        impedanceOhm: Double,
         excitation: Excitation,
         frequency: FrequencyRange,
         isExcited: Bool,
@@ -394,6 +647,7 @@ public final class LumpedPortExtension: EngineExtension {
         self.handle = handle
         self.directionIndex = directionIndex
         self.edges = edges
+        self.impedanceOhm = impedanceOhm
         self.excitation = excitation
         self.frequency = frequency
         self.isExcited = isExcited
@@ -451,6 +705,8 @@ public final class LumpedPortExtension: EngineExtension {
     public func doPreCurrentUpdates() {}
     public func doPostCurrentUpdates() {}
     public func apply2Current() {}
+
+    public func referenceImpedance(atHertz hertz: Double) -> Double? { impedanceOhm }
 }
 
 extension LumpedPortExtension {
@@ -520,6 +776,354 @@ extension LumpedPortExtension {
     }
 }
 
+
+// MARK: - 4b. Waveguide port
+
+/// A rectangular waveguide port: a TE_m0 mode imposed over a user-drawn
+/// cross-section, and the same mode's amplitude read back for S-parameters.
+///
+/// Where a lumped port is a two-terminal circuit element, this is a *field*
+/// boundary. The user gives a rectangle and a propagation axis; the mode's
+/// transverse profile follows from the rectangle's broad dimension:
+///
+///     E_v(u) = sin(m·π·(u − u₀) / a),  E_u = 0
+///
+/// with `a` the extent along the broad transverse axis `u`, `v` the other
+/// transverse axis, and `m` the mode index (1 = TE₁₀, the fundamental).
+///
+/// Two consequences of that profile are what make a waveguide port unlike a
+/// lumped one, and both are handled here rather than left to the caller:
+///
+/// - **Cutoff.** The mode only propagates above `f_c = m·c/(2a√(εrµr))`.
+///   Below it the fields are evanescent, there is no travelling wave, and a
+///   reflection coefficient is meaningless — `referenceImpedance` returns nil
+///   there instead of a number the DFT would happily turn into a plot.
+/// - **Dispersion.** The wave impedance `η / √(1 − (f_c/f)²)` is a function of
+///   frequency, rising without bound toward cutoff. A single reference
+///   impedance, the way a lumped port uses 50 Ω, would be wrong everywhere
+///   except one frequency.
+///
+/// The excitation is a *soft* source: it adds the mode's field on the port
+/// plane each step rather than enforcing it, so the plane stays transparent to
+/// whatever comes back. The cost is that it launches in **both** directions,
+/// and that is why the port drives one plane and measures at another.
+///
+/// Measuring where you inject cannot work. At the source plane the backward
+/// wave the source itself launched is present alongside the forward one, and
+/// the a/b decomposition has no way to tell it from a genuine reflection — a
+/// perfectly matched guide reads as |S11| ≈ 1. So the region's **depth along
+/// the propagation axis is the de-embedding distance**: the source sits on the
+/// face it launches from, the probe sits on the opposite face, and the
+/// source's own backward wave travels away from the probe instead of through
+/// it. A deeper region buys more separation; it needs to be at least a few
+/// cells, and evanescent junk near a discontinuity dies out over roughly the
+/// guide's transverse dimension.
+///
+/// The port still belongs at the end of a guide with an absorbing boundary
+/// behind it, so the backward wave leaves rather than returning later.
+///
+/// **Accuracy caveat, measured not guessed.** `absorbingBoundary` here is a
+/// graded lossy layer tuned for free-space plane waves, and a guided mode is
+/// neither: its wave impedance is `Z_TE`, not `η`, and its phase velocity is
+/// above c. Terminating a WR-90 guide with it rings down in 2400 steps against
+/// 12000 for a shorting wall — so it absorbs, but only about five times better
+/// than a short circuit, leaving roughly two thirds of the amplitude coming
+/// back per bounce. The standing wave that produces is real, and this port
+/// reports it faithfully; what it means is that |S11| from a nominally matched
+/// waveguide will read several dB rather than the near-zero a true PML would
+/// give. Mode geometry, cutoff and dispersion are unaffected. Fixing it is a
+/// boundary-condition job, not a port one.
+public final class WaveguidePortExtension: EngineExtension, PortRecorder {
+    /// One Yee edge on the port plane, with everything needed to convert
+    /// between the solver's edge quantities and physical fields.
+    public struct Sample {
+        public let pos: (Int, Int, Int)
+        /// The mode profile at this edge's transverse coordinate.
+        public let weight: Double
+        /// Length of the primary (E) edge, metres. `volt / eLength` is E.
+        public let eLength: Double
+        /// Length of the dual (H) edge, metres. `curr / hLength` is H.
+        public let hLength: Double
+
+        public init(pos: (Int, Int, Int), weight: Double, eLength: Double, hLength: Double) {
+            self.pos = pos
+            self.weight = weight
+            self.eLength = eLength
+            self.hLength = hLength
+        }
+    }
+
+    public let priority = 100
+    public let extensionName: String
+
+    private let handle: EngineHandle
+    /// Axis index the modal E field points along (the transverse axis that is
+    /// *not* the broad one).
+    private let eIndex: Int
+    /// Axis index the modal transverse H field points along.
+    private let hIndex: Int
+    /// Edges the source drives.
+    private let drive: [Sample]
+    /// Edges the mode amplitude is read from, one region-depth downstream.
+    private let probe: [Sample]
+    /// Σ weight² over `probe`, the denominator of the mode-overlap projection.
+    private let weightNorm: Double
+    private let cutoffHertz: Double
+    /// √(µ/ε) of whatever fills the guide — the plane-wave impedance the
+    /// modal impedance is derived from.
+    private let mediumImpedance: Double
+    /// +1 when the port launches along +axis, −1 when reversed. Flips which
+    /// direction counts as outgoing.
+    private let orientation: Double
+    private let excitation: Excitation
+    private let frequency: FrequencyRange
+    private let isExcited: Bool
+    private let amplitude: Double
+    private let dT: () -> Double
+
+    public private(set) var timeSeconds: [Double] = []
+    public private(set) var voltage: [Double] = []
+    public private(set) var current: [Double] = []
+
+    public init(
+        name: String,
+        handle: EngineHandle,
+        eIndex: Int,
+        hIndex: Int,
+        drive: [Sample],
+        probe: [Sample],
+        cutoffHertz: Double,
+        mediumImpedance: Double,
+        isReversed: Bool,
+        excitation: Excitation,
+        frequency: FrequencyRange,
+        isExcited: Bool,
+        amplitude: Double,
+        dT: @escaping () -> Double
+    ) {
+        self.extensionName = name
+        self.handle = handle
+        self.eIndex = eIndex
+        self.hIndex = hIndex
+        self.drive = drive
+        self.probe = probe
+        self.weightNorm = probe.reduce(0) { $0 + $1.weight * $1.weight }
+        self.cutoffHertz = cutoffHertz
+        self.mediumImpedance = mediumImpedance
+        self.orientation = isReversed ? -1 : 1
+        self.excitation = excitation
+        self.frequency = frequency
+        self.isExcited = isExcited
+        self.amplitude = amplitude
+        self.dT = dT
+    }
+
+    /// Cutoff of the excited mode, hertz. Surfaced so the runner can warn when
+    /// the swept band sits below it.
+    public var cutoffFrequencyHertz: Double { cutoffHertz }
+
+    public func doPreVoltageUpdates() {}
+    public func doPostVoltageUpdates() {}
+
+    public func apply2Voltages() {
+        guard let engine = handle.engine, weightNorm > 0 else { return }
+        let t = Double(engine.numTS) * dT()
+
+        if isExcited {
+            let waveform = ExcitationWaveformSampler.value(
+                excitation: excitation,
+                frequency: frequency,
+                timeSeconds: t
+            )
+            let level = amplitude * waveform
+            // `volt` is E·dl, so imposing a field of `level · weight` means
+            // adding that times the edge length.
+            for sample in drive {
+                let existing = engine.getVolt(eIndex, sample.pos.0, sample.pos.1, sample.pos.2)
+                engine.setVolt(
+                    eIndex,
+                    sample.pos.0, sample.pos.1, sample.pos.2,
+                    existing + level * sample.weight * sample.eLength
+                )
+            }
+        }
+
+        // Project the plane's fields onto the mode: ⟨field, profile⟩ / ⟨profile,
+        // profile⟩. Anything on the plane that is not this mode — higher modes,
+        // evanescent junk near a discontinuity — is orthogonal to the profile
+        // and drops out of the sum, which is the point of doing it this way
+        // rather than sampling one cell in the middle.
+        var eAmplitude = 0.0
+        var hAmplitude = 0.0
+        for sample in probe {
+            let volt = engine.getVolt(eIndex, sample.pos.0, sample.pos.1, sample.pos.2)
+            let curr = engine.getCurr(hIndex, sample.pos.0, sample.pos.1, sample.pos.2)
+            eAmplitude += volt / sample.eLength * sample.weight
+            hAmplitude += curr / sample.hLength * sample.weight
+        }
+        eAmplitude /= weightNorm
+        hAmplitude /= weightNorm
+
+        timeSeconds.append(t)
+        voltage.append(eAmplitude)
+        // Same sign convention as the lumped port: positive current flows out
+        // of the port into the structure, so a forward-travelling mode gives
+        // V/I = +Z. `orientation` carries the reversed case.
+        current.append(-hAmplitude * orientation)
+    }
+
+    public func doPreCurrentUpdates() {}
+    public func doPostCurrentUpdates() {}
+    public func apply2Current() {}
+
+    /// TE-mode wave impedance, `η / √(1 − (f_c/f)²)`.
+    ///
+    /// Nil at or below cutoff: the mode is evanescent there, carries no power,
+    /// and its "impedance" is purely imaginary.
+    public func referenceImpedance(atHertz hertz: Double) -> Double? {
+        guard hertz > cutoffHertz, cutoffHertz.isFinite else { return nil }
+        let ratio = cutoffHertz / hertz
+        let factor = (1 - ratio * ratio).squareRoot()
+        guard factor > 1e-6 else { return nil }
+        return mediumImpedance / factor
+    }
+}
+
+
+extension WaveguidePortExtension {
+    /// Everything needed to instantiate a port from the user's rectangle.
+    public struct Plan {
+        public let eIndex: Int
+        public let hIndex: Int
+        /// Edges on the launch face.
+        public let drive: [Sample]
+        /// Edges on the opposite face, where the mode is measured.
+        public let probe: [Sample]
+        public let cutoffHertz: Double
+        public let mediumImpedance: Double
+        /// Extent of the broad transverse dimension, metres — `a` in
+        /// `f_c = m·c/(2a)`. Reported so the UI can show it back.
+        public let broadWidthMeters: Double
+    }
+
+    /// Maps a waveguide port's rectangle onto the Yee grid and works out its
+    /// mode.
+    ///
+    /// The broad transverse axis — the longer of the two — is taken as `u`,
+    /// the one the `sin(m·π·u/a)` profile varies along, and the modal E field
+    /// then points along the narrow axis `v`. That is the TE_m0 convention:
+    /// for WR-90 held the usual way up, `a` is the 22.86 mm wall and E is
+    /// vertical across the 10.16 mm one. Choosing it from the geometry rather
+    /// than asking means a port drawn either way round still excites the
+    /// fundamental rather than something that cannot propagate.
+    public static func plan(
+        for port: ResolvedPort,
+        unit: LengthUnit,
+        lines: GridMesher.Lines,
+        op: Operator,
+        materialProvider: CADMaterialProvider
+    ) -> Plan? {
+        let dIndex = axisIndex(port.direction)
+        let (first, second) = port.direction.perpendicular
+
+        let span = { (axis: Axis) in port.bounds.maximum[axis] - port.bounds.minimum[axis] }
+        let (broad, narrow) = span(first) >= span(second) ? (first, second) : (second, first)
+        let uIndex = axisIndex(broad), vIndex = axisIndex(narrow)
+
+        let uLines = lines.metersLines[uIndex]
+        let vLines = lines.metersLines[vIndex]
+        let dLines = lines.metersLines[dIndex]
+        guard uLines.count > 1, vLines.count > 1, !dLines.isEmpty else { return nil }
+
+        let uMin = unit.toMeters(port.bounds.minimum[broad])
+        let uMax = unit.toMeters(port.bounds.maximum[broad])
+        let width = uMax - uMin
+        guard width > 0 else { return nil }
+
+        // The source sits on the face the port launches from and the probe on
+        // the far one, so a reversed port fires from the opposite side of its
+        // own box and measures back across it.
+        let launchValue = port.isReversed
+            ? unit.toMeters(port.bounds.maximum[port.direction])
+            : unit.toMeters(port.bounds.minimum[port.direction])
+        let probeValue = port.isReversed
+            ? unit.toMeters(port.bounds.minimum[port.direction])
+            : unit.toMeters(port.bounds.maximum[port.direction])
+        let launchIndex = nearestIndex(dLines, launchValue)
+        let probeIndex = nearestIndex(dLines, probeValue)
+        guard launchIndex != probeIndex else { return nil }
+
+        let uLower = nearestIndex(uLines, uMin)
+        let uUpper = nearestIndex(uLines, uMax)
+        let vLower = nearestIndex(vLines, unit.toMeters(port.bounds.minimum[narrow]))
+        let vUpper = nearestIndex(vLines, unit.toMeters(port.bounds.maximum[narrow]))
+        guard uUpper > uLower, vUpper > vLower else { return nil }
+
+        let mode = max(port.modeIndex, 1)
+        var drive: [Sample] = []
+        var probe: [Sample] = []
+        drive.reserveCapacity((uUpper - uLower + 1) * (vUpper - vLower))
+        probe.reserveCapacity(drive.capacity)
+
+        for iu in uLower...uUpper {
+            // sin() vanishes at both walls, which is exactly right — the
+            // tangential E of a TE mode is zero on a perfect conductor — so
+            // those edges contribute nothing rather than being special-cased.
+            let weight = sin(Double(mode) * Double.pi * (uLines[iu] - uMin) / width)
+            guard abs(weight) > 1e-12 else { continue }
+
+            for iv in vLower..<vUpper {
+                func sample(onPlane plane: Int) -> Sample? {
+                    var pos = (0, 0, 0)
+                    switch dIndex {
+                    case 0: pos.0 = plane
+                    case 1: pos.1 = plane
+                    default: pos.2 = plane
+                    }
+                    switch uIndex {
+                    case 0: pos.0 = iu
+                    case 1: pos.1 = iu
+                    default: pos.2 = iu
+                    }
+                    switch vIndex {
+                    case 0: pos.0 = iv
+                    case 1: pos.1 = iv
+                    default: pos.2 = iv
+                    }
+                    let eLength = op.getEdgeLength(vIndex, pos)
+                    let hLength = op.getEdgeLength(uIndex, pos, dualMesh: true)
+                    guard eLength > 0, hLength > 0 else { return nil }
+                    return Sample(pos: pos, weight: weight, eLength: eLength, hLength: hLength)
+                }
+                if let s = sample(onPlane: launchIndex) { drive.append(s) }
+                if let s = sample(onPlane: probeIndex) { probe.append(s) }
+            }
+        }
+        guard !drive.isEmpty, !probe.isEmpty else { return nil }
+
+        // Whatever fills the guide sets both the cutoff and the impedance, so
+        // a dielectric-loaded port is not silently treated as air.
+        let centre = port.bounds.center
+        let coords = (unit.toMeters(centre.x), unit.toMeters(centre.y), unit.toMeters(centre.z))
+        let epsR = max(materialProvider.material(direction: vIndex, coords: coords, matType: 0), 1e-9)
+        let muR = max(materialProvider.material(direction: vIndex, coords: coords, matType: 2), 1e-9)
+
+        let lightSpeed = 299_792_458.0 / (epsR * muR).squareRoot()
+        let cutoff = Double(mode) * lightSpeed / (2 * width)
+        let impedance = 376.730_313_668 * (muR / epsR).squareRoot()
+
+        return Plan(
+            eIndex: vIndex,
+            hIndex: uIndex,
+            drive: drive,
+            probe: probe,
+            cutoffHertz: cutoff,
+            mediumImpedance: impedance,
+            broadWidthMeters: width
+        )
+    }
+}
+
 // MARK: - 5. Post-processing: DFT -> S-parameters
 
 public enum PortSpectrum {
@@ -546,10 +1150,13 @@ public enum PortSpectrum {
     /// all need it, and a Touchstone file carrying a fabricated 0° would be
     /// worse than no file at all.
     public static func reflection(
-        port: LumpedPortExtension,
-        impedanceOhm z0: Double,
+        port: PortRecorder,
         atHertz f: Double
     ) -> (real: Double, imaginary: Double)? {
+        // A waveguide below its cutoff has no propagating mode to reflect,
+        // so there is no meaningful Γ — better to report nothing than a
+        // number computed from an impedance that does not exist.
+        guard let z0 = port.referenceImpedance(atHertz: f), z0 > 0, z0.isFinite else { return nil }
         let v = dft(time: port.timeSeconds, values: port.voltage, atHertz: f)
         let i = dft(time: port.timeSeconds, values: port.current, atHertz: f)
         let aRe = (v.real + z0 * i.real) / 2, aIm = (v.imag + z0 * i.imag) / 2
@@ -566,19 +1173,18 @@ public enum PortSpectrum {
     }
 
     /// |S11| in dB.
-    public static func s11(port: LumpedPortExtension, impedanceOhm z0: Double, atHertz f: Double) -> Double {
-        guard let gamma = reflection(port: port, impedanceOhm: z0, atHertz: f) else { return .infinity }
+    public static func s11(port: PortRecorder, atHertz f: Double) -> Double {
+        guard let gamma = reflection(port: port, atHertz: f) else { return .infinity }
         let magnitude = (gamma.real * gamma.real + gamma.imaginary * gamma.imaginary).squareRoot()
         return 20 * log10(magnitude)
     }
 
     /// Phase of S11 in degrees, the companion to `s11`.
     public static func s11PhaseDegrees(
-        port: LumpedPortExtension,
-        impedanceOhm z0: Double,
+        port: PortRecorder,
         atHertz f: Double
     ) -> Double? {
-        guard let gamma = reflection(port: port, impedanceOhm: z0, atHertz: f) else { return nil }
+        guard let gamma = reflection(port: port, atHertz: f) else { return nil }
         return atan2(gamma.imaginary, gamma.real) * 180 / .pi
     }
 }
@@ -740,13 +1346,27 @@ public final class SimulationRunner: ObservableObject {
         case noDomain
         case modelHasErrors(Int)
         case noExcitedLumpedPort
+        /// The port's rectangle collapsed to nothing on the grid — usually a
+        /// zero-width region, or one so thin the mesh gave it no cells.
+        case degenerateWaveguidePort(String)
+        case waveguidePortBelowCutoff(name: String, cutoffHertz: Double)
         case noConductorNearExcitedPort(String)
 
         public var errorDescription: String? {
             switch self {
             case .noDomain: return "The computational domain is not defined."
             case .modelHasErrors(let n): return "The model has \(n) error(s) — fix them before running the simulation."
-            case .noExcitedLumpedPort: return "No excited lumped port; there is nothing to compute a return loss from."
+            case .noExcitedLumpedPort:
+                return "No excited port; there is nothing to compute a return loss from."
+            case .degenerateWaveguidePort(let name):
+                return "Waveguide port “\(name)” has no cells. Give its region a real extent on both axes across the propagation direction, and check the mesh is fine enough to put at least one cell inside it."
+            case .waveguidePortBelowCutoff(let name, let cutoff):
+                return String(
+                    format: "Waveguide port “%@” is below cutoff over the whole swept band: its fundamental mode "
+                        + "starts at %.4f GHz. Nothing propagates below that — widen the port's broad dimension, "
+                        + "or raise the frequency range above the cutoff.",
+                    name, cutoff / 1e9
+                )
             case .noConductorNearExcitedPort(let name):
                 return "Port “\(name)” isn't touching a conductor on either terminal. Its resistor would sit alone in free space, perfectly matched to its own reference impedance — the result would be a flat, meaningless S11 near 0 dB. Assign a conductive material (e.g. PEC) to the body the port should feed, or move the port terminals so they meet it."
             }
@@ -813,6 +1433,11 @@ public final class SimulationRunner: ObservableObject {
     /// Set when far-field recording was asked for but could not be set up, so
     /// the absence of a pattern is explained rather than just observed.
     @Published public private(set) var farFieldWarning: String?
+    /// Things the mesher or the material setup could not honour — a rotated
+    /// zero-thickness sheet, one smaller than a cell. Published because these
+    /// mean a body is silently absent from the physics, which is exactly the
+    /// class of problem a user cannot see in the viewport.
+    @Published public private(set) var solverWarnings: [String] = []
     @Published public private(set) var gridSize: (Int, Int, Int) = (0, 0, 0)
     /// True if the spectrum currently shown came from a run stopped early
     /// rather than one that ran its full step count.
@@ -869,7 +1494,7 @@ public final class SimulationRunner: ObservableObject {
 
     private var op: Operator?
     private var engine: Engine?
-    private var ports: [LumpedPortExtension] = []
+    private var ports: [PortRecorder] = []
     private var currentTask: Task<Void, Never>?
     private var nextRunID = 1
     private var lastExcitedPortName: String?
@@ -913,13 +1538,13 @@ public final class SimulationRunner: ObservableObject {
             spectrum.append(
                 S11Point(
                     hertz: f,
-                    decibels: PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f),
-                    phaseDegrees: PortSpectrum.s11PhaseDegrees(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: f)
+                    decibels: PortSpectrum.s11(port: excited, atHertz: f),
+                    phaseDegrees: PortSpectrum.s11PhaseDegrees(port: excited, atHertz: f)
                 )
             )
         }
         s11Spectrum = spectrum
-        s11DbAtCenter = PortSpectrum.s11(port: excited, impedanceOhm: lastImpedanceOhm, atHertz: (clampedMin + clampedMax) / 2)
+        s11DbAtCenter = PortSpectrum.s11(port: excited, atHertz: (clampedMin + clampedMax) / 2)
         plotRange = FrequencyRange(minimumHertz: clampedMin, maximumHertz: clampedMax)
     }
 
@@ -945,7 +1570,7 @@ public final class SimulationRunner: ObservableObject {
         let resolved = document.resolved
         guard resolved.errorCount == 0 else { throw RunnerError.modelHasErrors(resolved.errorCount) }
         guard resolved.simulation.domain != nil else { throw RunnerError.noDomain }
-        guard resolved.simulation.ports.contains(where: { $0.kind == .lumped && $0.isExcited }) else {
+        guard resolved.simulation.ports.contains(where: \.isExcited) else {
             throw RunnerError.noExcitedLumpedPort
         }
 
@@ -975,8 +1600,19 @@ public final class SimulationRunner: ObservableObject {
         op.materialProvider = materialProvider
         op.absorbingBoundary = makeAbsorbingBoundary(boundaries: setup.boundaries, lines: lines.metersLines)
 
+        // Infinitely thin conductors are a boundary condition, not a material.
+        var sheetWarnings: [String] = []
+        defer { self.solverWarnings = sheetWarnings }
+        op.forcedPECEdges = ZeroThicknessConductors.edges(
+            bodies: resolved.bodies,
+            materials: document.state.materials,
+            unit: unit,
+            lines: lines,
+            warnings: &sheetWarnings
+        )
+
         let handle = EngineHandle()
-        var portExtensions: [LumpedPortExtension] = []
+        var portExtensions: [PortRecorder] = []
         var factories: [() -> EngineExtension] = []
 
         for port in resolved.simulation.ports where port.kind == .lumped {
@@ -1006,6 +1642,48 @@ public final class SimulationRunner: ObservableObject {
                 handle: handle,
                 directionIndex: directionIndex,
                 edges: edges,
+                impedanceOhm: port.impedanceOhm,
+                excitation: setup.excitation,
+                frequency: setup.frequency,
+                isExcited: port.isExcited,
+                amplitude: port.amplitude,
+                dT: { [weak op] in op?.dT ?? 0 }
+            )
+            portExtensions.append(ext)
+            factories.append { ext }
+        }
+
+        for port in resolved.simulation.ports where port.kind == .waveguide {
+            guard let plan = WaveguidePortExtension.plan(
+                for: port,
+                unit: unit,
+                lines: lines,
+                op: op,
+                materialProvider: materialProvider
+            ) else {
+                throw RunnerError.degenerateWaveguidePort(port.name)
+            }
+
+            // A band entirely below cutoff produces no propagating mode at
+            // all: the run would be minutes of evanescent decay and an empty
+            // spectrum. Say so now, with the number the user needs.
+            if setup.frequency.maximumHertz <= plan.cutoffHertz {
+                throw RunnerError.waveguidePortBelowCutoff(
+                    name: port.name,
+                    cutoffHertz: plan.cutoffHertz
+                )
+            }
+
+            let ext = WaveguidePortExtension(
+                name: "Port_\(port.name)",
+                handle: handle,
+                eIndex: plan.eIndex,
+                hIndex: plan.hIndex,
+                drive: plan.drive,
+                probe: plan.probe,
+                cutoffHertz: plan.cutoffHertz,
+                mediumImpedance: plan.mediumImpedance,
+                isReversed: port.isReversed,
                 excitation: setup.excitation,
                 frequency: setup.frequency,
                 isExcited: port.isExcited,
@@ -1090,8 +1768,9 @@ public final class SimulationRunner: ObservableObject {
             return UInt((seconds / dT).rounded(.up))
         }
         let usesDecayCriterion = decayTargetDb < 0 && excitationSteps != nil
-        let excitedPortName = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.name
-        let impedanceOhm = resolved.simulation.ports.first(where: { $0.kind == .lumped && $0.isExcited })!.impedanceOhm
+        let excitedPort = resolved.simulation.ports.first(where: \.isExcited)!
+        let excitedPortName = excitedPort.name
+        let impedanceOhm = excitedPort.impedanceOhm
         let spectrumPointCount = self.spectrumPointCount
         let portExtensionsSnapshot = portExtensions
         let farFieldSnapshot = farFieldExtension
@@ -1183,15 +1862,15 @@ public final class SimulationRunner: ObservableObject {
             // run still yields a (less converged) spectrum instead of
             // nothing — useful for an early peek at where a resonance is
             // heading without waiting for the full step count.
-            let centerDb = PortSpectrum.s11(port: excited, impedanceOhm: impedanceOhm, atHertz: frequency.centerHertz)
+            let centerDb = PortSpectrum.s11(port: excited, atHertz: frequency.centerHertz)
             var spectrumBuilder: [S11Point] = []
             spectrumBuilder.reserveCapacity(spectrumPointCount)
             let count = max(spectrumPointCount, 2)
             for i in 0..<count {
                 let f = frequency.minimumHertz
                     + (frequency.maximumHertz - frequency.minimumHertz) * Double(i) / Double(count - 1)
-                let db = PortSpectrum.s11(port: excited, impedanceOhm: impedanceOhm, atHertz: f)
-                let phase = PortSpectrum.s11PhaseDegrees(port: excited, impedanceOhm: impedanceOhm, atHertz: f)
+                let db = PortSpectrum.s11(port: excited, atHertz: f)
+                let phase = PortSpectrum.s11PhaseDegrees(port: excited, atHertz: f)
                 spectrumBuilder.append(S11Point(hertz: f, decibels: db, phaseDegrees: phase))
             }
             let finalSpectrum = spectrumBuilder
@@ -1245,7 +1924,7 @@ public final class SimulationRunner: ObservableObject {
     nonisolated private static func evaluateFarField(
         _ recorder: NearFieldToFarFieldExtension?,
         angleStepDegrees: Double,
-        port: LumpedPortExtension?,
+        port: PortRecorder?,
         impedanceOhm: Double
     ) -> [FarFieldPattern] {
         guard let recorder else { return [] }
@@ -1263,7 +1942,7 @@ public final class SimulationRunner: ObservableObject {
                 let power = 0.5 * (v.real * i.real + v.imag * i.imag)
                 if power > 0 { accepted = power }
 
-                let s11Db = PortSpectrum.s11(port: port, impedanceOhm: impedanceOhm, atHertz: frequency)
+                let s11Db = PortSpectrum.s11(port: port, atHertz: frequency)
                 if s11Db.isFinite { reflection = pow(10, s11Db / 20) }
             }
 
@@ -1304,15 +1983,35 @@ public final class SimulationRunner: ObservableObject {
         let absorbingFaces = faces.map { $0 == .pml }
         guard absorbingFaces.contains(true), boundaries.pmlCellCount > 0 else { return nil }
 
-        // Gedney's commonly-used estimate for a graded absorber's peak
-        // conductivity, evaluated at the smallest cell size present (a
-        // conservative choice: it over-absorbs a bit rather than
-        // under-absorbing and letting more energy leak back in).
-        let smallestCell = lines.flatMap { axisLines in
-            zip(axisLines, axisLines.dropFirst()).map { $1 - $0 }
-        }.filter { $0 > 0 }.min() ?? 1e-3
+        // Gedney's estimate for a graded absorber's peak conductivity,
+        // σ ≈ (m+1) / (150π·Δ), evaluated **at each boundary** — Δ is the cell
+        // size in that layer, not somewhere else in the model.
+        //
+        // This used to use the smallest cell anywhere in the domain, called
+        // conservative on the grounds that over-absorbing beats
+        // under-absorbing. It is not conservative, it is backwards: the
+        // optimum is optimal precisely because it balances absorption inside
+        // the layer against reflection off the layer's *front face*, and too
+        // much conductivity turns the absorber into a mirror. A board meshed
+        // at 0.4 mm through its substrate but 3.5 mm out in the padding got a
+        // σ roughly nine times too high on every face.
         let order = 3.0
-        let sigmaMax = (order + 1) / (150 * .pi * smallestCell)
+        let cells = max(boundaries.pmlCellCount, 1)
+
+        var sigmaMax = [Double](repeating: 0, count: 6)
+        for dim in 0..<3 {
+            let axis = lines[dim]
+            guard axis.count > 1 else { continue }
+            let usable = min(cells, axis.count - 1)
+
+            // Mean cell size across the layer on each side.
+            let lowSpan = axis[usable] - axis[0]
+            let highSpan = axis[axis.count - 1] - axis[axis.count - 1 - usable]
+            for (face, span) in [(2 * dim, lowSpan), (2 * dim + 1, highSpan)] {
+                let mean = span / Double(usable)
+                sigmaMax[face] = mean > 0 ? (order + 1) / (150 * .pi * mean) : 0
+            }
+        }
 
         return AbsorbingBoundarySettings(
             absorbingFaces: absorbingFaces,
@@ -1373,7 +2072,17 @@ public final class SimulationRunner: ObservableObject {
         // way through a ground plane's thickness and ends at its outer
         // surface). Assuming a fixed direction made a real, correctly
         // touching via-through-ground-plane port register as unconnected.
+        //
+        // The terminal itself is sampled first, and it is the case that
+        // matters most: a zero-thickness sheet has no volume for a stepped
+        // sample to land in, so a probe feeding a patch — terminal sitting
+        // exactly on the PEC surface, the most correct way to draw it — read
+        // as unconnected however far the step went. Sheets are a documented,
+        // supported construct here (`ShapeContainment` keeps them a surface
+        // precisely so `snapToBodyEdges` can put a grid line on them), so a
+        // port landing on one is a connection, not an error.
         func touchesConductor(at terminalMeters: Vec3) -> Bool {
+            if isConductive(terminalMeters) { return true }
             let step = localCellSize(near: terminalMeters[axis], in: axisLinesMeters)
             var forward = terminalMeters
             forward[axis] += step

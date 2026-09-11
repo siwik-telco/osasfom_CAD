@@ -232,4 +232,79 @@ final class NoConductorNearPortTests: XCTestCase {
         let runner = SimulationRunner()
         XCTAssertNoThrow(try runner.run(document: document))
     }
+
+    /// A probe feeding a patch built from zero-thickness PEC sheets — the
+    /// standard way to draw a microstrip antenna here, since modelling 35 µm
+    /// copper would force 35 µm cells through the whole board.
+    ///
+    /// Regression: the check only ever sampled one cell step *away* from each
+    /// terminal, in both directions. A sheet has no volume, so both samples
+    /// land off it no matter how small the step, and a correctly drawn patch
+    /// feed was rejected as unconnected. `ShapeContainment` keeps sheets a
+    /// surface on purpose — `snapToBodyEdges` puts a grid line exactly on
+    /// them — so a terminal sitting on one is the most correct way to draw
+    /// the connection, not an error.
+    @MainActor
+    func testProbeOntoZeroThicknessSheetsIsNotRejected() throws {
+        let h = 1.575, patchW = 48.97, patchL = 40.98, board = 68.0
+        var state = CADModelState(name: "Patch", lengthUnit: .millimeter)
+
+        state.bodies = [
+            CADBody(
+                name: "Substrate",
+                primitive: .box(
+                    BoxSpec(
+                        beginX: Expression(-board / 2), endX: Expression(board / 2),
+                        beginY: Expression(-board / 2), endY: Expression(board / 2),
+                        beginZ: Expression(0), endZ: Expression(h)
+                    )
+                ),
+                materialID: MaterialLibrary.fr4ID,
+                priority: 0
+            ),
+            CADBody(
+                name: "Ground",
+                primitive: .sheet(
+                    SheetSpec(
+                        width: Expression(board), depth: Expression(board),
+                        begin: Expression(0), end: Expression(0), normal: .z
+                    )
+                ),
+                materialID: MaterialLibrary.pecID,
+                priority: 2
+            ),
+            CADBody(
+                name: "Patch",
+                primitive: .sheet(
+                    SheetSpec(
+                        width: Expression(patchW), depth: Expression(patchL),
+                        begin: Expression(h), end: Expression(h), normal: .z
+                    )
+                ),
+                materialID: MaterialLibrary.pecID,
+                priority: 2
+            )
+        ]
+        state.simulation.domain = DomainSettings(mode: .automatic, padding: Vector3Expression(Vec3(repeating: 62)))
+        state.simulation.frequency = FrequencyRange(minimumHertz: 2.0e9, maximumHertz: 2.9e9)
+        state.simulation.mesh = MeshSettings(
+            cellsPerWavelength: 10,
+            fixedLinesZ: [Expression(h / 4), Expression(h / 2), Expression(3 * h / 4)]
+        )
+        // Probe from the ground sheet up to the patch sheet, offset toward a
+        // radiating edge the way a real feed is.
+        state.simulation.ports = [
+            SimulationPort(
+                name: "Feed",
+                begin: Vector3Expression(x: Expression(0), y: Expression(6.18), z: Expression(0)),
+                end: Vector3Expression(x: Expression(0), y: Expression(6.18), z: Expression(h)),
+                direction: .z,
+                impedanceOhm: 50
+            )
+        ]
+        state.simulation.solver.maximumTimeSteps = 1
+
+        let runner = SimulationRunner()
+        XCTAssertNoThrow(try runner.run(document: CADDocument(state: state)))
+    }
 }

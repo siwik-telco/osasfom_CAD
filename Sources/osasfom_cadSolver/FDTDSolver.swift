@@ -488,16 +488,23 @@ public struct AbsorbingBoundarySettings {
     public var cellCount: Int
     /// Grading exponent for the loss ramp (3 is the common PML default).
     public var gradingOrder: Double
-    /// Electric conductivity [S/m] reached at the outermost cell of the layer.
-    public var maxElectricLossSPerM: Double
+    /// Electric conductivity [S/m] reached at the outermost cell, **per face**
+    /// in the same order as `absorbingFaces`.
+    ///
+    /// Per face rather than one number for the whole domain because the
+    /// optimum depends on the cell size *at that boundary*, and the six faces
+    /// routinely differ: a board meshed finely through its substrate and
+    /// coarsely out in the padding has cells an order of magnitude apart.
+    public var maxElectricLossSPerM: [Double]
 
     public init(
         absorbingFaces: [Bool],
         cellCount: Int,
         gradingOrder: Double = 3,
-        maxElectricLossSPerM: Double
+        maxElectricLossSPerM: [Double]
     ) {
         precondition(absorbingFaces.count == 6)
+        precondition(maxElectricLossSPerM.count == 6)
         self.absorbingFaces = absorbingFaces
         self.cellCount = max(0, cellCount)
         self.gradingOrder = gradingOrder
@@ -570,6 +577,18 @@ public final class Operator {
 
     /// Number of edges the last `calcPEC()` forced to perfect conductor.
     public private(set) var pecEdgeCount = 0
+
+    /// Edges forced to perfect conductor regardless of what the material
+    /// averaging found, as `(direction, position)`.
+    ///
+    /// This is how an infinitely thin conductor gets represented. Volumetric
+    /// averaging samples cell interiors, so a surface of zero thickness is
+    /// invisible to it however fine the mesh — it occupies no volume to
+    /// average over. The standard treatment, and openEMS's, is to stop
+    /// pretending it is a material at all and impose the boundary condition
+    /// directly: tangential E vanishes on a perfect conductor, so the edges
+    /// lying *in* the sheet's plane are zeroed.
+    public var forcedPECEdges: [(direction: Int, pos: (Int, Int, Int))] = []
 
     // FDTD update coefficients consumed by Engine
     public private(set) var vv: FDTDArray!
@@ -644,11 +663,18 @@ public final class Operator {
     public func getDiscDelta(_ n: Int, _ pos: Int, dualMesh: Bool = false) -> Double {
         guard n >= 0 && n <= 2, pos < numLinesFor(n) else { return 0.0 }
         if !dualMesh {
-            if pos < numLinesFor(n) - 1 {
-                return getDiscLine(n, pos + 1, dualMesh: true) - getDiscLine(n, pos, dualMesh: true)
-            } else {
-                return getDiscLine(n, pos, dualMesh: true) - getDiscLine(n, pos - 1, dualMesh: true)
-            }
+            // The *primary* edge: node pos to node pos+1. Deriving it from
+            // dual lines instead returns the dual spacing at pos+1 — the same
+            // number on a uniform mesh, and badly wrong on a graded one.
+            //
+            // Clamped the way `getDiscLine` clamps, because quarter-cell
+            // averaging legitimately asks for `pos − 1` at the first line: a
+            // position off the end extends the outermost cell rather than
+            // indexing out of range.
+            let count = numLinesFor(n)
+            guard count > 1 else { return 0.0 }
+            let start = Swift.min(Swift.max(pos, 0), count - 2)
+            return discLines[n][start + 1] - discLines[n][start]
         } else {
             if pos > 0 {
                 return getDiscLine(n, pos, dualMesh: true) - getDiscLine(n, pos - 1, dualMesh: true)
@@ -727,9 +753,18 @@ public final class Operator {
 
         let materialG = G
 
-        let absorbing = absorbingLoss(direction: ny, pos: pos)
-        if delta1 != 0 { G += absorbing.electricSPerM * area1 / delta1 }
-        if delta2 != 0 { R += absorbing.magneticOhmPerM * area2 / delta2 }
+        let absorbingSigmaE = absorbingLoss(direction: ny, pos: pos)
+        if absorbingSigmaE > 0 {
+            if delta1 != 0 { G += absorbingSigmaE * area1 / delta1 }
+            // Matched-layer condition in the *local* medium: σ_m/µ = σ_e/ε.
+            // Using vacuum's µ0/ε0 regardless, as this did, leaves the layer
+            // mismatched everywhere a dielectric reaches the boundary — and a
+            // substrate usually does, since it runs to the domain edge.
+            if delta2 != 0, effMat.eps > 0 {
+                let sigmaM = absorbingSigmaE * effMat.mue / effMat.eps
+                R += sigmaM * area2 / delta2
+            }
+        }
 
         // A literal two-terminal resistor across this exact edge contributes
         // its conductance (1/ohms) directly — no area/length scaling, unlike
@@ -746,30 +781,35 @@ public final class Operator {
     /// electric one (the classic loss-matching condition) so the layer's
     /// wave impedance stays close to free space, keeping normal-incidence
     /// reflection low despite this not being a true PML.
-    private func absorbingLoss(direction: Int, pos: (Int, Int, Int)) -> (electricSPerM: Double, magneticOhmPerM: Double) {
-        guard let settings = absorbingBoundary, settings.cellCount > 0 else { return (0, 0) }
+    /// Electric conductivity of the absorbing layer at one edge, S/m.
+    ///
+    /// The magnetic counterpart is *not* returned: the matched-layer condition
+    /// is `σ_m = σ_e · µ/ε` in the **local** medium, and the local ε and µ are
+    /// only known where the effective material has been averaged. Returning a
+    /// magnetic loss computed from vacuum here is what made the layer
+    /// mismatched wherever a substrate ran into it.
+    private func absorbingLoss(direction: Int, pos: (Int, Int, Int)) -> Double {
+        guard let settings = absorbingBoundary, settings.cellCount > 0 else { return 0 }
 
-        var depthFactor = 0.0
+        var sigmaE = 0.0
         let coords = [pos.0, pos.1, pos.2]
         for dim in 0..<3 {
             let count = numLinesFor(dim)
             let distanceFromMin = coords[dim]
             let distanceFromMax = count - 1 - coords[dim]
 
+            // Each face carries its own peak conductivity, so the ramp is
+            // scaled by that face's optimum rather than a domain-wide one.
             if settings.absorbingFaces[2 * dim], distanceFromMin < settings.cellCount {
                 let x = Double(settings.cellCount - distanceFromMin) / Double(settings.cellCount)
-                depthFactor = max(depthFactor, pow(x, settings.gradingOrder))
+                sigmaE = max(sigmaE, settings.maxElectricLossSPerM[2 * dim] * pow(x, settings.gradingOrder))
             }
             if settings.absorbingFaces[2 * dim + 1], distanceFromMax < settings.cellCount {
                 let x = Double(settings.cellCount - distanceFromMax) / Double(settings.cellCount)
-                depthFactor = max(depthFactor, pow(x, settings.gradingOrder))
+                sigmaE = max(sigmaE, settings.maxElectricLossSPerM[2 * dim + 1] * pow(x, settings.gradingOrder))
             }
         }
-
-        guard depthFactor > 0 else { return (0, 0) }
-        let sigmaE = settings.maxElectricLossSPerM * depthFactor
-        let sigmaM = sigmaE * FDTDConstants.MUE0 / FDTDConstants.EPS0
-        return (sigmaE, sigmaM)
+        return sigmaE
     }
 
     /// Port of Operator::Calc_EffMatPos -> dispatches to quarter-cell / cell-center averaging
@@ -1064,6 +1104,18 @@ public final class Operator {
                 }
             }
         }
+
+        // Zero-thickness conductors, which the material path cannot see.
+        for edge in forcedPECEdges {
+            guard edge.direction >= 0, edge.direction < 3 else { continue }
+            guard edge.pos.0 >= 0, edge.pos.0 < numLines.0,
+                  edge.pos.1 >= 0, edge.pos.1 < numLines.1,
+                  edge.pos.2 >= 0, edge.pos.2 < numLines.2 else { continue }
+            vv.set(edge.direction, edge.pos, 0)
+            vi.set(edge.direction, edge.pos, 0)
+            count += 1
+        }
+
         pecEdgeCount = count
         return count
     }

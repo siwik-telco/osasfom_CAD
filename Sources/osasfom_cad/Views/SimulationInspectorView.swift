@@ -701,6 +701,42 @@ private struct PortEditor: View {
                     }
                     .pickerStyle(.segmented)
 
+                    HStack {
+                        Text("Mode").foregroundStyle(.secondary)
+                        Spacer()
+                        Text("TE").font(.caption).foregroundStyle(.secondary)
+                        TextField(
+                            "",
+                            value: document.portBinding(
+                                portID,
+                                \.modeIndex,
+                                actionName: "Change SimulationPort Mode",
+                                field: "mode"
+                            ),
+                            format: .number
+                        )
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 44)
+                        Text("0").font(.caption).foregroundStyle(.secondary)
+                    }
+                    .help("TE_m0 mode index. 1 is the fundamental; higher modes need a proportionally wider port to propagate.")
+
+                    if let cutoff = waveguideCutoffGHz(for: port) {
+                        // The number that decides whether the port works at
+                        // all: below it nothing propagates, and the run is
+                        // refused rather than spending minutes on evanescent
+                        // decay.
+                        LabeledContent("Cutoff") {
+                            Text("\(cutoff, format: .number.precision(.fractionLength(4))) GHz")
+                                .foregroundStyle(
+                                    document.state.simulation.frequency.maximumHertz <= cutoff * 1e9
+                                        ? AnyShapeStyle(.orange)
+                                        : AnyShapeStyle(.secondary)
+                                )
+                                .font(.caption.monospacedDigit())
+                        }
+                    }
+
                     BoundsExpressionEditor(
                         bounds: Binding(
                             get: { port.region },
@@ -758,6 +794,27 @@ private struct PortEditor: View {
             }
         }
     }
+
+    /// TE_m0 cutoff for a waveguide port, GHz, from the resolved rectangle.
+    ///
+    /// Mirrors `WaveguidePortExtension.plan`: the broad transverse dimension is
+    /// the longer of the two across the propagation axis, and `f_c = m·c/2a`.
+    /// Computed here rather than read back from the solver so the number is
+    /// live while the port is being sized, not only after a run.
+    private func waveguideCutoffGHz(for port: SimulationPort) -> Double? {
+        guard port.kind == .waveguide,
+              let resolved = document.resolved.simulation.ports.first(where: { $0.id == port.id })
+        else { return nil }
+
+        let (first, second) = port.direction.perpendicular
+        let span = { (axis: Axis) in resolved.bounds.maximum[axis] - resolved.bounds.minimum[axis] }
+        let broad = max(span(first), span(second))
+        guard broad > 0 else { return nil }
+
+        let metres = document.state.lengthUnit.toMeters(broad)
+        return Double(max(port.modeIndex, 1)) * 299_792_458.0 / (2 * metres) / 1e9
+    }
+
 }
 
 /// One terminal (begin or end) of a lumped port: X/Y/Z expression fields plus

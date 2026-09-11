@@ -272,6 +272,11 @@ struct SimulationRunnerView: View {
     /// Shown whenever there is a pattern to show, or a reason there isn't.
     @ViewBuilder
     private var farFieldSection: some View {
+        ForEach(runner.solverWarnings, id: \.self) { warning in
+            Label(warning, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+        }
         if let warning = runner.farFieldWarning {
             Section("Far Field") {
                 Label(warning, systemImage: "exclamationmark.triangle")

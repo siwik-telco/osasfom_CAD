@@ -89,4 +89,59 @@ public struct Matrix3: Hashable, Sendable {
             * rotationY(radians: angles.y * toRadians)
             * rotationZ(radians: angles.z * toRadians)
     }
+
+    /// The inverse of `euler(degrees:)` — the angles that rebuild this matrix.
+    ///
+    /// Needed because composing rotations is matrix work, but a body stores
+    /// Euler angles: transforming an already-rotated body means going to a
+    /// matrix, multiplying, and coming back.
+    ///
+    /// Angles are not unique (every orientation has at least two Euler
+    /// triples), so this returns *a* triple that reproduces the matrix, not
+    /// the one someone originally typed. Round-tripping is exact in the
+    /// matrix, not in the numbers.
+    public var eulerDegrees: Vec3 {
+        // Element (row, column); `columns` is column-major, so m[r][c] is
+        // columns.c[r]. With M = Rx·Ry·Rz:
+        //   m02 =  sin(b)
+        //   m12 = -sin(a)·cos(b),  m22 = cos(a)·cos(b)
+        //   m00 =  cos(b)·cos(c),  m01 = -cos(b)·sin(c)
+        let m02 = columns.2.x
+        let m12 = columns.2.y
+        let m22 = columns.2.z
+        let m00 = columns.0.x
+        let m01 = columns.1.x
+        let m10 = columns.0.y
+        let m11 = columns.1.y
+
+        let toDegrees = 180 / Double.pi
+        let sinB = Swift.min(Swift.max(m02, -1), 1)
+        let b = asin(sinB)
+
+        // Gimbal lock: at b = ±90° the X and Z rotations act on the same axis
+        // and only their sum (or difference) is recoverable. Pinning A to zero
+        // and putting everything in C is the conventional resolution.
+        guard abs(m02) < 1 - 1e-9 else {
+            return Vec3(x: 0, y: b * toDegrees, z: atan2(m10, m11) * toDegrees)
+        }
+
+        return Vec3(
+            x: atan2(-m12, m22) * toDegrees,
+            y: b * toDegrees,
+            z: atan2(-m01, m00) * toDegrees
+        )
+    }
+
+    /// Reflection through the plane normal to `axis`. Not a rotation — its
+    /// determinant is −1 — but `M·R·M` is, which is how a mirrored body's
+    /// orientation is recovered.
+    public static func reflection(normalTo axis: Axis) -> Matrix3 {
+        var matrix = Matrix3.identity
+        switch axis {
+        case .x: matrix.columns.0 = Vec3(x: -1, y: 0, z: 0)
+        case .y: matrix.columns.1 = Vec3(x: 0, y: -1, z: 0)
+        case .z: matrix.columns.2 = Vec3(x: 0, y: 0, z: -1)
+        }
+        return matrix
+    }
 }

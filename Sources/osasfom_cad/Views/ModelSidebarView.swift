@@ -15,6 +15,8 @@ struct ModelSidebarView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    @State private var isShowingTransform = false
+
     private var bodyList: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
@@ -66,6 +68,16 @@ struct ModelSidebarView: View {
                             document.selectedBodyID = body.id
                             document.duplicateSelectedBody()
                         }
+                        Button("Transform…") {
+                            // Keep an existing multi-selection: transforming
+                            // several bodies at once is the point of the
+                            // dialog, and resetting to the clicked row would
+                            // silently drop the rest.
+                            if !document.selectedBodyIDs.contains(body.id) {
+                                document.selectedBodyID = body.id
+                            }
+                            isShowingTransform = true
+                        }
                         Divider()
                         Button("Delete", role: .destructive) {
                             document.deleteBody(body.id)
@@ -91,6 +103,9 @@ struct ModelSidebarView: View {
             .foregroundStyle(.secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
+        }
+        .sheet(isPresented: $isShowingTransform) {
+            TransformSheet(document: document, isPresented: $isShowingTransform)
         }
     }
 
@@ -174,5 +189,33 @@ private struct BodyRow: View {
             }
             .buttonStyle(.plain)
         }
+    }
+}
+
+/// Hosts `TransformSelectionView` as a dialog.
+///
+/// A sheet rather than an inspector panel because a transform is a one-shot
+/// action on a selection, not a property of it — and because the selection it
+/// acts on is exactly what the inspector would otherwise be replaced by.
+private struct TransformSheet: View {
+    @ObservedObject var document: CADDocument
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Transform")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { isPresented = false }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(12)
+
+            Divider()
+
+            TransformSelectionView(document: document)
+        }
+        .frame(width: 380, height: 460)
     }
 }

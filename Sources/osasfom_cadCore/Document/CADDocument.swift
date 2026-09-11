@@ -284,6 +284,73 @@ public final class CADDocument: ObservableObject {
         selectedBodyID = copy.id
     }
 
+    // MARK: - Transforms
+
+    /// Bodies a transform would act on: the selection, in list order.
+    public var transformTargets: [CADBody] { orderedSelectedBodies }
+
+    /// Applies a translate / rotate / mirror to the selected bodies, either in
+    /// place or as copies.
+    ///
+    /// One undo step for the whole operation, however many bodies and copies
+    /// it touches — an array of twelve elements is one action to the user, so
+    /// it should be one action to undo.
+    ///
+    /// Copies are inserted straight after the body they came from rather than
+    /// appended, so an array reads in order in the model list instead of
+    /// interleaving when several bodies are transformed at once.
+    @discardableResult
+    public func applyTransform(_ operation: BodyTransformOperation) throws -> [UUID] {
+        let targets = transformTargets
+        guard !targets.isEmpty else { return [] }
+
+        let variables = resolved.variables.values
+        let copies = max(0, min(operation.copyCount, operation.maximumCopies))
+
+        // Everything is computed before anything is committed, so a bad
+        // expression leaves the model untouched rather than half-transformed.
+        var movedTransforms: [UUID: BodyTransform] = [:]
+        var newBodies: [(after: UUID, body: CADBody)] = []
+        var takenNames = Set(state.bodies.map(\.name))
+
+        for body in targets {
+            if copies == 0 {
+                movedTransforms[body.id] = try operation.applied(
+                    to: body.transform, repetition: 1, variables: variables
+                )
+                continue
+            }
+            for repetition in 1...copies {
+                let transform = try operation.applied(
+                    to: body.transform, repetition: repetition, variables: variables
+                )
+                let name = CADModelState.uniqueName(base: body.name, taken: takenNames)
+                takenNames.insert(name)
+
+                var copy = body.duplicated(named: name)
+                copy.transform = transform
+                newBodies.append((after: body.id, body: copy))
+            }
+        }
+
+        perform(operation.actionName(copies: copies, bodyCount: targets.count)) { state in
+            for (id, transform) in movedTransforms {
+                guard let index = state.bodyIndex(id: id) else { continue }
+                state.bodies[index].transform = transform
+            }
+            // Reversed, so several copies of one body keep their order once
+            // each is inserted immediately after the original.
+            for entry in newBodies.reversed() {
+                let index = (state.bodyIndex(id: entry.after).map { $0 + 1 }) ?? state.bodies.count
+                state.bodies.insert(entry.body, at: index)
+            }
+        }
+
+        let created = newBodies.map(\.body.id)
+        if !created.isEmpty { selectedBodyIDs = Set(created) }
+        return created
+    }
+
     public func moveBodies(fromOffsets source: IndexSet, toOffset destination: Int) {
         perform("Reorder Bodies") { state in
             state.bodies.moveElements(fromOffsets: source, toOffset: destination)

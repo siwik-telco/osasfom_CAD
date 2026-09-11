@@ -68,26 +68,29 @@ public struct CADModelState: Codable, Hashable, Sendable, ExpressionWalkable {
     /// Replaces the old "count bodies of this kind + 1", which produced
     /// duplicates as soon as anything was deleted.
     public func uniqueBodyName(base: String) -> String {
-        uniqueName(base: base, taken: Set(bodies.map(\.name)))
+        Self.uniqueName(base: base, taken: Set(bodies.map(\.name)))
     }
 
     public func uniqueVariableName(base: String) -> String {
-        uniqueName(base: base, taken: Set(variables.map(\.trimmedName)))
+        Self.uniqueName(base: base, taken: Set(variables.map(\.trimmedName)))
     }
 
     public func uniquePortName(base: String) -> String {
-        uniqueName(base: base, taken: Set(simulation.ports.map(\.name)))
+        Self.uniqueName(base: base, taken: Set(simulation.ports.map(\.name)))
     }
 
     public func uniqueMonitorName(base: String) -> String {
-        uniqueName(base: base, taken: Set(simulation.monitors.map(\.name)))
+        Self.uniqueName(base: base, taken: Set(simulation.monitors.map(\.name)))
     }
 
     public func uniqueMaterialName(base: String) -> String {
-        uniqueName(base: base, taken: Set(materials.map(\.name)))
+        Self.uniqueName(base: base, taken: Set(materials.map(\.name)))
     }
 
-    private func uniqueName(base: String, taken: Set<String>) -> String {
+    /// Static so a caller naming several new items in one pass can keep its
+    /// own running set — asking the state each time would hand back the same
+    /// name repeatedly, since none of them are in it yet.
+    public static func uniqueName(base: String, taken: Set<String>) -> String {
         let trimmed = base.trimmingCharacters(in: .whitespacesAndNewlines)
         let root = trimmed.isEmpty ? "Item" : trimmed
         guard taken.contains(root) else { return root }

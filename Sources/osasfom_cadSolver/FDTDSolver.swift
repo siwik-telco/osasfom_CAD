@@ -142,6 +142,19 @@ public final class Engine {
 
     private var extensions: [EngineExtension] = []
 
+    /// The sign tangential H takes when imaged below index 0, one per axis.
+    ///
+    /// No H is stored below the first line, so the curl on a lower face uses
+    /// the image of the H just inside. Tangential H is even across an
+    /// electric wall (+1) and odd across a magnetic one (−1). Taken from
+    /// `Operator.magneticWalls` when the engine starts.
+    private var lowerImageSigns: (Double, Double, Double) = (1, 1, 1)
+
+    /// Axes whose upper face is a magnetic wall. After every current update
+    /// the H just outside those faces is overwritten with the image of the H
+    /// just inside, which puts the wall exactly on the last grid line.
+    private var magneticUpperAxes: [Int] = []
+
     // MARK: Construction
 
     /// Mirrors Engine::New(op)
@@ -156,14 +169,24 @@ public final class Engine {
         self.numLines = op.numLines
         self.volt = FDTDArray(name: "volt", numLines: op.numLines)
         self.curr = FDTDArray(name: "curr", numLines: op.numLines)
+        configureWalls()
     }
 
     public func initEngine() {
         numTS = 0
         volt = FDTDArray(name: "volt", numLines: numLines)
         curr = FDTDArray(name: "curr", numLines: numLines)
+        configureWalls()
         initExtensions()
         sortExtensionsByPriority()
+    }
+
+    private func configureWalls() {
+        let walls = op.magneticWalls
+        guard walls.count == 6 else { return }
+        func sign(_ axis: Int) -> Double { walls[2 * axis] ? -1 : 1 }
+        lowerImageSigns = (sign(0), sign(1), sign(2))
+        magneticUpperAxes = (0..<3).filter { walls[2 * $0 + 1] }
     }
 
     public func reset() {
@@ -235,18 +258,28 @@ public final class Engine {
     /// *along* the edge's own direction — on an axis of symmetry (e.g. the
     /// centerline of a dipole) that component is identically zero by
     /// symmetry, even though real current is flowing.
+    ///
+    /// On a lower face there is no H below index 0, so the missing value is
+    /// the image of the one just inside. Across an electric wall it is equal,
+    /// the two terms cancel, and tangential E on the face never moves. Across
+    /// a magnetic wall it is opposite, which leaves that field free.
     public func curlH(direction n: Int, pos: (Int, Int, Int)) -> Double {
         let nP  = (n + 1) % 3
         let nPP = (n + 2) % 3
 
-        let shiftP:  Int = componentIndex(pos, nP)  > 0 ? 1 : 0
-        let shiftPP: Int = componentIndex(pos, nPP) > 0 ? 1 : 0
+        let backP = componentIndex(pos, nP) > 0
+            ? curr.get(nPP, shifted(pos, dim: nP, by: -1))
+            : lowerImageSign(nP) * curr.get(nPP, pos)
+        let backPP = componentIndex(pos, nPP) > 0
+            ? curr.get(nP, shifted(pos, dim: nPP, by: -1))
+            : lowerImageSign(nPP) * curr.get(nP, pos)
 
-        let posP  = shifted(pos, dim: nP,  by: -shiftP)
-        let posPP = shifted(pos, dim: nPP, by: -shiftPP)
+        return curr.get(nPP, pos) - backP
+             - curr.get(nP,  pos) + backPP
+    }
 
-        return curr.get(nPP, pos) - curr.get(nPP, posP)
-             - curr.get(nP,  pos) + curr.get(nP,  posPP)
+    @inline(__always) private func lowerImageSign(_ axis: Int) -> Double {
+        axis == 0 ? lowerImageSigns.0 : (axis == 1 ? lowerImageSigns.1 : lowerImageSigns.2)
     }
 
     /// Below this many cells in the range being updated, fall back to the
@@ -408,12 +441,45 @@ public final class Engine {
 
             doPreCurrentUpdates()
             updateCurrents(startX: 0, numX: numLines.0)
+            if !magneticUpperAxes.isEmpty { imageCurrentsAcrossUpperMagneticWalls() }
             doPostCurrentUpdates()
             apply2Current()
 
             numTS += 1
         }
         return true
+    }
+
+    /// Rewrites the tangential H half a cell beyond each upper magnetic wall
+    /// as the negative of the H half a cell inside it.
+    ///
+    /// That is the image a perfect magnetic conductor on the last grid line
+    /// implies, and it is what the next voltage update reads for the
+    /// tangential E lying on the wall. Left alone, the outside H is never
+    /// driven and stays zero — also a magnetic wall, but half a cell beyond
+    /// the domain rather than on its edge.
+    private func imageCurrentsAcrossUpperMagneticWalls() {
+        for axis in magneticUpperAxes {
+            let last = numLines(axis) - 1
+            guard last > 0 else { continue }
+            let first = (axis + 1) % 3, second = (axis + 2) % 3
+            for a in 0..<numLines(first) {
+                for b in 0..<numLines(second) {
+                    let outside = setting(setting(setting((0, 0, 0), axis, last), first, a), second, b)
+                    let inside = setting(outside, axis, last - 1)
+                    curr.set(first, outside, -curr.get(first, inside))
+                    curr.set(second, outside, -curr.get(second, inside))
+                }
+            }
+        }
+    }
+
+    @inline(__always) private func setting(_ p: (Int, Int, Int), _ dim: Int, _ value: Int) -> (Int, Int, Int) {
+        switch dim {
+        case 0: return (value, p.1, p.2)
+        case 1: return (p.0, value, p.2)
+        default: return (p.0, p.1, value)
+        }
     }
 
     /// Total field energy left in the domain, as an unnormalised proxy.
@@ -539,10 +605,14 @@ public final class Operator {
     public var backgroundSigma: Double = 0.0
     public var backgroundDensity: Double = 0.0
 
-    /// Graded loss layer applied near the domain boundary; `nil` disables it
-    /// (boundary then behaves as a perfect reflector unless `applyElectricBC`
-    /// / `applyMagneticBC` are also used to hard-wall specific faces).
+    /// Graded loss layer applied near the domain boundary; `nil` disables it.
+    /// The layer only attenuates — what ends the domain behind it is the wall
+    /// `applyElectricBC` or `applyMagneticBC` puts on that face.
     public var absorbingBoundary: AbsorbingBoundarySettings?
+
+    /// Faces `[xMin, xMax, yMin, yMax, zMin, zMax]` set by `applyMagneticBC`.
+    /// `Engine` reads these when it starts and images H across them.
+    public private(set) var magneticWalls = [Bool](repeating: false, count: 6)
 
     /// A discrete two-terminal resistor stamped directly across a single Yee
     /// edge — used for a lumped port's source resistance. Its conductance
@@ -1053,6 +1123,7 @@ public final class Operator {
         }
 
         calcPEC()
+        zeroEdgesLeavingDomain()
 
         // release EC scratch buffers, matches original cleanup
         for n in 0..<3 {
@@ -1178,53 +1249,72 @@ public final class Operator {
 
     // MARK: Boundary conditions (ApplyElectricBC / ApplyMagneticBC)
 
-    /// Port of Operator::ApplyElectricBC — zero tangential E on PEC boundaries.
-    /// `dirs` has 6 entries: [xmin,xmax,ymin,ymax,zmin,zmax]; true = PEC there.
+    /// Electric walls: tangential E vanishes on each flagged face.
+    ///
+    /// `dirs` has 6 entries, `[xMin, xMax, yMin, yMax, zMin, zMax]`. The two
+    /// field components lying in a face are zeroed on its outermost grid
+    /// line, so the wall sits exactly on that line on either side.
+    ///
+    /// This used to zero the component *normal* to the face — the one E field
+    /// a conductor leaves alone. Tangential E was then decided by the engine's
+    /// bare edges instead, always zero on a lower face and never on an upper
+    /// one, and a lower face asked to be a wall also lost the normal field in
+    /// its first layer of cells.
     public func applyElectricBC(_ dirs: [Bool]) {
         guard dirs.count == 6 else { return }
-        for n in 0..<3 {
-            let nP = (n + 1) % 3, nPP = (n + 2) % 3
-            for a in 0..<numLinesFor(nP) {
-                for b in 0..<numLinesFor(nPP) {
-                    var pos = [0, 0, 0]
-                    pos[nP] = a; pos[nPP] = b
-
-                    if dirs[2 * n] {          // lower boundary in dir n
-                        pos[n] = 0
-                        vv.set(n, (pos[0], pos[1], pos[2]), 0)
-                        vi.set(n, (pos[0], pos[1], pos[2]), 0)
-                    }
-                    if dirs[2 * n + 1] {      // upper boundary in dir n
-                        pos[n] = numLinesFor(n) - 1
-                        vv.set(n, (pos[0], pos[1], pos[2]), 0)
-                        vi.set(n, (pos[0], pos[1], pos[2]), 0)
-                    }
+        for face in 0..<6 where dirs[face] {
+            let axis = face / 2
+            let plane = face % 2 == 0 ? 0 : numLinesFor(axis) - 1
+            for component in [(axis + 1) % 3, (axis + 2) % 3] {
+                forEachPosition(onPlane: plane, of: axis) { pos in
+                    vv.set(component, pos, 0)
+                    vi.set(component, pos, 0)
                 }
             }
         }
     }
 
-    /// Port of Operator::ApplyMagneticBC — zero tangential H on PMC boundaries.
+    /// Magnetic walls: tangential H vanishes on each flagged face.
+    ///
+    /// Tangential H lives half a cell off every grid line, so there is no
+    /// coefficient to zero that would put a magnetic wall *on* one. The engine
+    /// images H across the face instead — odd, where an electric wall's image
+    /// is even — which places the wall on the outermost line exactly as
+    /// `applyElectricBC` does. That makes a magnetic wall an exact symmetry
+    /// plane: half a model closed by one reproduces the whole model's fields.
+    ///
+    /// Only records the faces, which `Engine` reads when it starts, so call it
+    /// before `Engine.make(op:)`. A face must not also be passed to
+    /// `applyElectricBC`, which would pin the field this leaves free.
     public func applyMagneticBC(_ dirs: [Bool]) {
         guard dirs.count == 6 else { return }
-        for n in 0..<3 {
-            let nP = (n + 1) % 3, nPP = (n + 2) % 3
-            for a in 0..<numLinesFor(nP) {
-                for b in 0..<numLinesFor(nPP) {
-                    var pos = [0, 0, 0]
-                    pos[nP] = a; pos[nPP] = b
+        magneticWalls = dirs
+    }
 
-                    if dirs[2 * n] {
-                        pos[n] = 0
-                        ii.set(n, (pos[0], pos[1], pos[2]), 0)
-                        iv.set(n, (pos[0], pos[1], pos[2]), 0)
-                    }
-                    if dirs[2 * n + 1] {
-                        pos[n] = numLinesFor(n) - 1
-                        ii.set(n, (pos[0], pos[1], pos[2]), 0)
-                        iv.set(n, (pos[0], pos[1], pos[2]), 0)
-                    }
-                }
+    /// Calls `body` with every grid position on plane `index` of `axis`.
+    private func forEachPosition(onPlane index: Int, of axis: Int, _ body: ((Int, Int, Int)) -> Void) {
+        let first = (axis + 1) % 3, second = (axis + 2) % 3
+        for a in 0..<numLinesFor(first) {
+            for b in 0..<numLinesFor(second) {
+                var pos = [0, 0, 0]
+                pos[axis] = index
+                pos[first] = a
+                pos[second] = b
+                body((pos[0], pos[1], pos[2]))
+            }
+        }
+    }
+
+    /// Zeroes every E edge that starts on the last grid line of its own axis.
+    ///
+    /// Such an edge ends one line beyond the domain. Nothing drives it while
+    /// the H outside stays zero, but a magnetic wall's image makes that H live,
+    /// so the edge is shut off explicitly — as openEMS does.
+    private func zeroEdgesLeavingDomain() {
+        for n in 0..<3 {
+            forEachPosition(onPlane: numLinesFor(n) - 1, of: n) { pos in
+                vv.set(n, pos, 0)
+                vi.set(n, pos, 0)
             }
         }
     }

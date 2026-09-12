@@ -618,6 +618,18 @@ public enum ModelResolver {
                 )
             )
         }
+        // A matched periodic pair passes validation, so say what the solver
+        // actually does with it rather than let it look implemented.
+        for axis in Axis.allCases
+        where setup.boundaries.lower(on: axis) == .periodic && setup.boundaries.upper(on: axis) == .periodic {
+            diagnostics.append(
+                .warning(
+                    subject,
+                    field: "boundaries.\(axis.rawValue)",
+                    "Periodic boundaries are not implemented yet; both \(axis.displayName) faces are simulated as electric walls."
+                )
+            )
+        }
         if setup.boundaries.pmlCellCount < 4 {
             diagnostics.append(
                 .warning(

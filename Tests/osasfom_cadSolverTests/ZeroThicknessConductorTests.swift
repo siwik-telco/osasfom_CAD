@@ -85,6 +85,7 @@ final class ZeroThicknessConductorTests: XCTestCase {
             materials: state.materials,
             unit: state.lengthUnit,
             lines: lines,
+            maximumHertz: state.simulation.frequency.maximumHertz,
             warnings: &warnings
         )
     }
@@ -138,5 +139,83 @@ final class ZeroThicknessConductorTests: XCTestCase {
         for point in runner.s11Spectrum {
             XCTAssertLessThanOrEqual(point.decibels, 0.01, "passivity at \(point.hertz / 1e9) GHz")
         }
+    }
+
+    // MARK: - Conductors other than PEC
+
+    /// A sheet assigned Copper — what most people pick for PCB metal — used to
+    /// get no edges, and had no volume for the material path to find, so it
+    /// vanished from the simulation without a word. It must be imposed
+    /// exactly like PEC.
+    func testCopperSheetsClaimTheSameEdgesAsPEC() throws {
+        func key(_ edge: (direction: Int, pos: (Int, Int, Int))) -> String {
+            "\(edge.direction):\(edge.pos.0),\(edge.pos.1),\(edge.pos.2)"
+        }
+
+        var pecWarnings: [String] = []
+        let pec = try edges(makeState(), warnings: &pecWarnings)
+
+        var copperState = makeState()
+        for index in copperState.bodies.indices where copperState.bodies[index].materialID == MaterialLibrary.pecID {
+            copperState.bodies[index].materialID = MaterialLibrary.copperID
+        }
+        var copperWarnings: [String] = []
+        let copper = try edges(copperState, warnings: &copperWarnings)
+
+        XCTAssertTrue(copperWarnings.isEmpty, "\(copperWarnings)")
+        XCTAssertFalse(copper.isEmpty)
+        XCTAssertEqual(Set(copper.map(key)), Set(pec.map(key)))
+    }
+
+    /// A surface of no thickness cannot hold a dielectric, so a zero-thickness
+    /// FR-4 sheet has nothing to add — but that has to be said rather than
+    /// discovered later from a result that quietly ignores it.
+    func testNonConductingSheetIsReportedRatherThanSilentlyIgnored() throws {
+        var baselineWarnings: [String] = []
+        let baseline = try edges(makeState(), warnings: &baselineWarnings)
+
+        var state = makeState()
+        // Same outline as the patch, so the mesh — and every other edge — is
+        // unchanged.
+        state.bodies.append(
+            CADBody(
+                name: "Coverlay",
+                primitive: .sheet(SheetSpec(
+                    width: Expression(patchW), depth: Expression(patchL),
+                    begin: Expression(h), end: Expression(h), normal: .z
+                )),
+                materialID: MaterialLibrary.fr4ID,
+                priority: 1
+            )
+        )
+        var warnings: [String] = []
+        let withSheet = try edges(state, warnings: &warnings)
+
+        XCTAssertEqual(withSheet.count, baseline.count, "an FR-4 sheet must not claim edges")
+        XCTAssertEqual(warnings.count, 1)
+        let warning = try XCTUnwrap(warnings.first)
+        XCTAssertTrue(warning.contains("Coverlay"), warning)
+        XCTAssertTrue(warning.contains("not a conductor"), warning)
+    }
+
+    /// The line between "conducts like PEC" and "does not" is σ/ωε at the top
+    /// of the band: metals qualify, everything else in the library does not.
+    func testConductorClassificationFollowsTheLossTangentAtTheTopOfTheBand() {
+        let library = Dictionary(uniqueKeysWithValues: MaterialLibrary.defaults().map { ($0.id, $0) })
+        let top = 5e9
+
+        for id in [MaterialLibrary.pecID, MaterialLibrary.copperID, MaterialLibrary.aluminumID] {
+            let material = library[id]
+            XCTAssertTrue(material?.actsAsPerfectElectricConductor(upToHertz: top) == true, material?.name ?? "")
+        }
+        for id in [MaterialLibrary.vacuumID, MaterialLibrary.fr4ID, MaterialLibrary.rogers4003CID, MaterialLibrary.ptfeID] {
+            let material = library[id]
+            XCTAssertTrue(material?.actsAsPerfectElectricConductor(upToHertz: top) == false, material?.name ?? "")
+        }
+
+        let resistive = MaterialDefinition(name: "Resistive film", color: .neutralGray, electricConductivity: 1e3)
+        XCTAssertFalse(resistive.actsAsPerfectElectricConductor(upToHertz: top))
+        let pmc = MaterialDefinition(name: "PMC", color: .neutralGray, kind: .perfectMagneticConductor)
+        XCTAssertFalse(pmc.actsAsPerfectElectricConductor(upToHertz: top))
     }
 }

@@ -402,7 +402,15 @@ public final class CADMaterialProvider: MaterialProvider {
 public enum ZeroThicknessConductors {
 
     /// Edges to force, for every visible body that is a zero-thickness sheet
-    /// of a perfectly conducting material.
+    /// of a material that conducts like a perfect conductor up to
+    /// `maximumHertz` — PEC itself, or a metal such as copper.
+    ///
+    /// Only PEC used to qualify. A sheet assigned Copper, the natural choice
+    /// for PCB metal, got no edges and had no volume for the material path to
+    /// find, so it dropped out of the simulation without a word — while the
+    /// port connectivity check, which samples exactly on the sheet, still
+    /// passed. A zero-thickness sheet of anything that is not a good conductor
+    /// really has nothing to contribute, and `warnings` says so.
     ///
     /// Rotated sheets are skipped: a plane at an angle does not lie along Yee
     /// edges, and staircasing it silently would be worse than leaving it to
@@ -413,6 +421,7 @@ public enum ZeroThicknessConductors {
         materials: [MaterialDefinition],
         unit: LengthUnit,
         lines: GridMesher.Lines,
+        maximumHertz: Double,
         warnings: inout [String]
     ) -> [(direction: Int, pos: (Int, Int, Int))] {
         let byID = Dictionary(materials.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -420,8 +429,14 @@ public enum ZeroThicknessConductors {
 
         for body in bodies where body.isVisible {
             guard case .sheet(let size, let normal) = body.shape, size[normal] == 0 else { continue }
-            guard let material = byID[body.materialID],
-                  material.kind == .perfectElectricConductor else { continue }
+            guard let material = byID[body.materialID] else { continue }
+
+            guard material.actsAsPerfectElectricConductor(upToHertz: maximumHertz) else {
+                if let reason = unsupportedSheetReason(material) {
+                    warnings.append("“\(body.name)” is a zero-thickness sheet of “\(material.name)”, \(reason)")
+                }
+                continue
+            }
 
             guard body.isAxisAligned else {
                 warnings.append(
@@ -490,6 +505,25 @@ public enum ZeroThicknessConductors {
             }
         }
         return result
+    }
+
+    /// Why a zero-thickness sheet of `material` is left out of the simulation,
+    /// worded to follow the material's name — or `nil` when leaving it out
+    /// changes nothing, as for a sheet of plain vacuum.
+    private static func unsupportedSheetReason(_ material: MaterialDefinition) -> String? {
+        switch material.kind {
+        case .perfectElectricConductor:
+            return nil
+        case .perfectMagneticConductor:
+            return "a magnetic conductor. Only electric conductors can be imposed on a surface, so it is not simulated."
+        case .dielectric:
+            let isVacuum = material.epsilonR == 1 && material.muR == 1
+                && material.electricConductivity == 0 && material.magneticConductivity == 0
+                && material.dispersion.isNone
+            guard !isVacuum else { return nil }
+            return "which is not a conductor across the simulated band. A surface has no volume for a dielectric "
+                + "or lossy material to fill, so it is not simulated. Give it a thickness, or assign a metal."
+        }
     }
 }
 
@@ -1608,6 +1642,7 @@ public final class SimulationRunner: ObservableObject {
             materials: document.state.materials,
             unit: unit,
             lines: lines,
+            maximumHertz: setup.frequency.maximumHertz,
             warnings: &sheetWarnings
         )
 
@@ -1956,22 +1991,36 @@ public final class SimulationRunner: ObservableObject {
         }
     }
 
-    /// Maps `.electric`/`.magnetic` faces to a permanent hard wall (the
-    /// operator coefficients are zeroed once, right after
-    /// `calcECOperator()`). `.pml` is handled separately by the graded loss
-    /// layer set up before `calcECOperator()` runs; `.periodic` has no
-    /// implementation here, so those faces are simply left as they are
-    /// (equivalent to an untreated, reflective open boundary).
-    private func applyHardWallBoundaries(op: Operator, boundaries: BoundarySettings) {
+    /// Which of the faces `[xMin, xMax, yMin, yMax, zMin, zMax]` end on an
+    /// electric wall and which on a magnetic one.
+    ///
+    /// Every face that is not a magnetic wall is terminated by a perfect
+    /// electric conductor on its outermost grid line. For an electric wall
+    /// that is all there is. An absorbing face is the graded loss layer set up
+    /// before `calcECOperator()`, backed by that wall the way openEMS backs its
+    /// PML. A periodic face has no implementation and falls back to it, which
+    /// the resolver warns about.
+    ///
+    /// No face is left to the engine's bare edges: those are not an open
+    /// boundary but a PEC on the lower faces and a PMC half a cell beyond the
+    /// upper ones, which is how "periodic" and the far side of every absorber
+    /// used to end.
+    nonisolated static func wallFaces(_ boundaries: BoundarySettings) -> (electric: [Bool], magnetic: [Bool]) {
         let faces: [BoundaryCondition] = [
             boundaries.xMin, boundaries.xMax,
             boundaries.yMin, boundaries.yMax,
             boundaries.zMin, boundaries.zMax
         ]
-        let electric = faces.map { $0 == .electric }
         let magnetic = faces.map { $0 == .magnetic }
-        if electric.contains(true) { op.applyElectricBC(electric) }
-        if magnetic.contains(true) { op.applyMagneticBC(magnetic) }
+        return (electric: magnetic.map { !$0 }, magnetic: magnetic)
+    }
+
+    /// Applies `wallFaces` to the operator, after `calcECOperator()` and
+    /// before the engine is built.
+    private func applyHardWallBoundaries(op: Operator, boundaries: BoundarySettings) {
+        let walls = Self.wallFaces(boundaries)
+        op.applyElectricBC(walls.electric)
+        op.applyMagneticBC(walls.magnetic)
     }
 
     private func makeAbsorbingBoundary(boundaries: BoundarySettings, lines: [[Double]]) -> AbsorbingBoundarySettings? {

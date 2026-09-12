@@ -154,6 +154,32 @@ public struct MaterialDefinition: Identifiable, Codable, Hashable, Sendable {
         return electricConductivity / (omega * epsilonAbsolute)
     }
 
+    /// How far conduction current must outweigh displacement current, σ/ωε,
+    /// before a finite conductivity is idealised as a perfect conductor.
+    ///
+    /// At 10⁵ every structural metal qualifies well into millimetre waves —
+    /// copper is near 10⁸ at 5 GHz — while resistive films, carbon composites
+    /// and lossy dielectrics do not. The skin depth at that ratio is under a
+    /// thousandth of a wavelength, so making the conductor perfect costs
+    /// nothing a surface of no thickness could have represented anyway.
+    public static let perfectConductorLossTangent = 1e5
+
+    /// Whether this material can stand in for a perfect electric conductor at
+    /// every frequency up to `hertz`: explicitly PEC, or a medium whose σ/ωε
+    /// is still at least `perfectConductorLossTangent` there. The ratio falls
+    /// with frequency, so the top of the band is the one case to check.
+    public func actsAsPerfectElectricConductor(upToHertz hertz: Double) -> Bool {
+        switch kind {
+        case .perfectElectricConductor:
+            return true
+        case .perfectMagneticConductor:
+            return false
+        case .dielectric:
+            guard let tangent = lossTangent(atHertz: hertz) else { return false }
+            return tangent >= Self.perfectConductorLossTangent
+        }
+    }
+
     /// Sets `electricConductivity` from a loss tangent at a reference frequency.
     ///
     /// The result is rounded to 12 significant digits. That is far below any

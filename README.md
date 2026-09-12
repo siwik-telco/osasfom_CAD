@@ -165,7 +165,10 @@ them rather than failing the whole model.
 A zero-thickness sheet is the right way to model PCB metal: it costs no cells,
 and the solver imposes it as a perfect-conductor boundary condition on the grid
 edges lying in its plane rather than trying to average a surface over cell
-volumes.
+volumes. That holds for PEC and for any material that conducts like one across
+the band — Copper and Aluminium do, with σ/ωε far above 10⁵. A zero-thickness
+sheet of anything else has no volume to fill, so it is left out of the
+simulation and the run says so.
 
 **Booleans.** Each body carries an ordered history of Add (union), Subtract
 (difference) and Trim (intersection) steps, each with its own primitive and
@@ -243,11 +246,14 @@ derived from the wavelength), or Manual bounds. Padding is itself parametric,
 so `lambda0/2` works.
 
 **Boundaries** — per face: PML (graded absorbing layer), Electric wall (PEC),
-Magnetic wall (PMC), Periodic. PML cell count is configurable.
+Magnetic wall (PMC), Periodic. PML cell count is configurable. Walls sit
+exactly on the domain's outermost grid line, and an absorbing layer is backed
+by an electric wall. A magnetic wall is an exact symmetry plane: half a model
+closed by one rings at the same frequency as the whole.
 
-> **Periodic is not implemented.** Selecting it currently leaves the face as an
-> untreated, reflective open boundary. Use Electric/Magnetic walls for
-> symmetry-plane and broadside unit-cell work.
+> **Periodic is not implemented.** Selecting it simulates the face as an
+> electric wall, and the model reports a warning. Use Electric/Magnetic walls
+> for symmetry-plane and broadside unit-cell work.
 
 **Frequency** — minimum and maximum of the swept band.
 
@@ -487,16 +493,16 @@ Consequences: absolute |S11| from a waveguide port reads several dB high, and
 far-field patterns carry some boundary reflection. Resonant *frequencies* are
 much less affected than absolute magnitudes.
 
-*Periodic boundaries are not implemented* — a face set to Periodic behaves as
-an untreated reflective open boundary, with no warning.
+*Periodic boundaries are not implemented* — a face set to Periodic is
+simulated as an electric wall, and the model warns about it.
 
 *Field monitors are not recorded* — they exist in the model and the exported
 deck, but the solver does not sample them.
 
 *PEC is a large finite conductivity plus a hard-boundary pass.* Edges whose
 material loss exceeds what the update can represent are forced to zero, which
-is the correct limit; zero-thickness sheets are imposed directly as a boundary
-condition.
+is the correct limit; zero-thickness sheets of PEC or of a metal (σ/ωε ≥ 10⁵ at
+the top of the band) are imposed directly as a boundary condition.
 
 *Numeric transforms quantise to `%.6f`* — a micrometre in a millimetre project
 — because placements round-trip through expression text. This is why
